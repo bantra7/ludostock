@@ -3,6 +3,7 @@ uvicorn[standard]
 python-dotenv
 fastapi-sqlalchemy
 sqlalchemy
-psycopg2-binary
 alembic
 pylint
+duckdb
+duckdb-engine
