@@ -1,20 +1,11 @@
 # boardgame-app
-Projet d'app de gestion d'une collection de jeux de société.
 
-## boardgame-backend
-Appli Backend développée en FastAPI.
+Projet d'application de gestion d'une collection de jeux de société.
 
-## boardgamr-frontend
-Appli Fronted développée en React.
+## Backend
 
+L'application Backend est développée en FastAPI. Elle fournit l'API pour gérer les données de la collection de jeux.
 
-## Tips
+## Frontend
 
-### Mettre à jour Python après installation de librairies
-
-```
-cd Python-3.9.15/
-./configure --enable-optimizations
-sudo make altinstall
-sudo make install
-```
+L'application Frontend est développée en React. Elle offre une interface utilisateur pour interagir avec la collection de jeux.

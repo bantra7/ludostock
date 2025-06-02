@@ -1,3 +1,8 @@
+# Frontend
+
+Cette application frontend est développée avec React (utilisant Create React App) et fournit l'interface utilisateur pour interagir avec l'application de gestion de collection de jeux de société.
+
+---
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
