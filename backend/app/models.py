@@ -13,7 +13,7 @@ game_labels = Table(
 class BoardGame(Base):
     __tablename__ = "boardgames"
 
-    id = Column(Integer, primary_key=True, index=True) # Renamed from game_id, added index
+    id = Column(Integer, primary_key=True, autoincrement=False, nullable=False) # Renamed from game_id, added index
     name = Column(String, index=True) # Renamed from title
     editor_name = Column(String)
     num_players_min = Column(Integer)
@@ -30,8 +30,8 @@ class BoardGame(Base):
 class Label(Base):
     __tablename__ = "labels"
 
-    id = Column(Integer, primary_key=True, index=True) # Renamed from label_id, added index
-    name = Column(String, unique=True, index=True) # Renamed from value
+    id = Column(Integer, primary_key=True, autoincrement=False, nullable=False) # Renamed from label_id, added index
+    name = Column(String, unique=True) # Renamed from value
 
     games = relationship(
         "BoardGame",
