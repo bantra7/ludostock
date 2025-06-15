@@ -1,5 +1,6 @@
 import os
 from fastapi import Depends, FastAPI, HTTPException # Added HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from sqlalchemy.orm import Session
 from . import crud, models, schemas # models.Base will be accessed via this
@@ -10,6 +11,15 @@ from .database import SessionLocal, engine # engine is here
 # models.Base.metadata.create_all(bind=engine) # Commented out to prevent execution during test collection
 
 app = FastAPI()
+
+# CORS Middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Allows specific origin
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Dependency
 def get_db():
