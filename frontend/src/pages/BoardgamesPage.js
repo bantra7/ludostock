@@ -31,8 +31,8 @@ const BoardgamesPage = () => {
   const handleSubmitForm = async (boardgameData) => {
     setError(null);
     try {
-      if (editingBoardgame) {
-        await boardgameService.updateBoardgame(editingBoardgame.id, boardgameData);
+      if (editingBoardgame && editingBoardgame.name) { // Check for name to signify editing
+        await boardgameService.updateBoardgame(editingBoardgame.name, boardgameData);
       } else {
         await boardgameService.createBoardgame(boardgameData);
       }
@@ -44,11 +44,11 @@ const BoardgamesPage = () => {
     }
   };
 
-  const handleDeleteBoardgame = async (id) => {
+  const handleDeleteBoardgame = async (name) => { // Changed id to name
     setError(null);
     if (window.confirm('Are you sure you want to delete this boardgame?')) {
       try {
-        await boardgameService.deleteBoardgame(id);
+        await boardgameService.deleteBoardgame(name); // Use name
         refreshBoardgames();
       } catch (err) {
         console.error("Delete error:", err.response || err.message || err);

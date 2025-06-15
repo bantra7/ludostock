@@ -6,15 +6,15 @@ from .database import Base # Using Base from .database
 game_labels = Table(
     'game_labels',
     Base.metadata,
-    Column('game_id', Integer, ForeignKey('boardgames.id'), primary_key=True),
-    Column('label_id', Integer, ForeignKey('labels.id'), primary_key=True)
+    Column('game_name', String, ForeignKey('boardgames.name'), primary_key=True), # Changed game_id to game_name, FK to boardgames.name
+    Column('label_name', String, ForeignKey('labels.name'), primary_key=True) # Changed label_id to label_name and FK to labels.name
 )
 
 class BoardGame(Base):
     __tablename__ = "boardgames"
 
-    id = Column(Integer, primary_key=True, autoincrement=False, nullable=False) # Renamed from game_id, added index
-    name = Column(String, index=True) # Renamed from title
+    # id column removed
+    name = Column(String, primary_key=True, nullable=False, unique=True, index=True) # Now primary key
     editor_name = Column(String)
     num_players_min = Column(Integer)
     num_players_max = Column(Integer)
@@ -30,8 +30,8 @@ class BoardGame(Base):
 class Label(Base):
     __tablename__ = "labels"
 
-    id = Column(Integer, primary_key=True, autoincrement=False, nullable=False) # Renamed from label_id, added index
-    name = Column(String, unique=True) # Renamed from value
+    # id column removed
+    name = Column(String, primary_key=True, nullable=False, unique=True) # Now primary key
 
     games = relationship(
         "BoardGame",

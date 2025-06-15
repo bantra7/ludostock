@@ -13,8 +13,7 @@ class LabelCreate(LabelBase):
     pass
 
 class Label(LabelBase):
-    id: int
-
+    # id: int field removed
     class Config:
         orm_mode = True
 
@@ -46,7 +45,7 @@ class BoardGameUpdate(BaseModel): # Cannot inherit from BoardGameBase easily due
         orm_mode = True # Good to have, though not strictly necessary for request body
 
 class BoardGame(BoardGameBase):
-    id: int
+    # id: int field removed
     labels: List[Label] = [] # Nested Label schemas, using typing.List
 
     # Config orm_mode is inherited from BoardGameBase, so not strictly needed here

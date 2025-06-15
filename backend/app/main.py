@@ -42,44 +42,30 @@ async def get_labels_endpoint(skip: int = 0, limit: int = 100, db: Session = Dep
     labels = crud.get_labels(db, skip=skip, limit=limit)
     return labels
 
-@app.get("/api/labels/{label_id}", response_model=schemas.Label, tags=["Labels"])
-async def get_label_endpoint(label_id: int, db: Session = Depends(get_db)):
-    db_label = crud.get_label(db, label_id=label_id)
+@app.get("/api/labels/{label_name}", response_model=schemas.Label, tags=["Labels"])
+async def get_label_endpoint(label_name: str, db: Session = Depends(get_db)): # Changed label_id to label_name
+    db_label = crud.get_label_by_name(db, name=label_name) # Use get_label_by_name
     if db_label is None:
-        raise HTTPException(status_code=404, detail="Label not found")
+        raise HTTPException(status_code=404, detail=f"Label '{label_name}' not found")
     return db_label
 
-@app.put("/api/labels/{label_id}", response_model=schemas.Label, tags=["Labels"])
-async def update_label_endpoint(label_id: int, label: schemas.LabelCreate, db: Session = Depends(get_db)):
-    # First, check if the label to update exists
-    db_label_check = crud.get_label(db, label_id=label_id)
-    if db_label_check is None:
-        raise HTTPException(status_code=404, detail="Label not found to update")
+@app.put("/api/labels/{label_name}", response_model=schemas.Label, tags=["Labels"])
+async def update_label_endpoint(label_name: str, label: schemas.LabelCreate, db: Session = Depends(get_db)): # Changed label_id to label_name
+    try:
+        updated_label = crud.update_label(db=db, name=label_name, label_update=label)
+    except ValueError as e: # Catch potential ValueError from CRUD for name conflicts
+        raise HTTPException(status_code=400, detail=str(e))
 
-    # Optional: Check if the new name would conflict with another existing label
-    # This depends on business logic (e.g., are names unique, can we rename to an existing name if it's a different ID)
-    # For simplicity, crud.update_label might handle this if name has a unique constraint,
-    # or it might update. If Label.name is unique, database will raise error.
-    # Here, we are primarily updating the found label.
-
-    updated_label = crud.update_label(db=db, label_id=label_id, label_update=label)
-    # crud.update_label returns the updated label or None if not found (though we checked)
     if updated_label is None:
-        # This case should ideally not be reached if the initial check passed and crud.update_label is robust
-        raise HTTPException(status_code=404, detail="Label disappeared during update")
+        # This implies the original label_name was not found by crud.update_label
+        raise HTTPException(status_code=404, detail=f"Label '{label_name}' not found to update")
     return updated_label
 
-@app.delete("/api/labels/{label_id}", response_model=schemas.Label, tags=["Labels"])
-async def delete_label_endpoint(label_id: int, db: Session = Depends(get_db)):
-    db_label = crud.get_label(db, label_id=label_id) # Check existence for 404
-    if db_label is None:
-        raise HTTPException(status_code=404, detail="Label not found to delete")
-
-    deleted_label = crud.delete_label(db=db, label_id=label_id)
-    # crud.delete_label returns the deleted object or None
+@app.delete("/api/labels/{label_name}", response_model=schemas.Label, tags=["Labels"])
+async def delete_label_endpoint(label_name: str, db: Session = Depends(get_db)): # Changed label_id to label_name
+    deleted_label = crud.delete_label(db=db, name=label_name) # Use name
     if deleted_label is None:
-         # This case should ideally not be reached if the initial check passed.
-        raise HTTPException(status_code=404, detail="Label could not be deleted or was already gone.")
+        raise HTTPException(status_code=404, detail=f"Label '{label_name}' not found or could not be deleted")
     return deleted_label
 
 # BoardGame Endpoints
@@ -92,33 +78,28 @@ async def get_board_games_endpoint(skip: int = 0, limit: int = 100, db: Session 
     games = crud.get_board_games(db, skip=skip, limit=limit)
     return games
 
-@app.get("/api/boardgames/{game_id}", response_model=schemas.BoardGame, tags=["BoardGames"])
-async def get_board_game_endpoint(game_id: int, db: Session = Depends(get_db)):
-    db_game = crud.get_board_game(db, game_id=game_id)
+@app.get("/api/boardgames/{game_name}", response_model=schemas.BoardGame, tags=["BoardGames"])
+async def get_board_game_endpoint(game_name: str, db: Session = Depends(get_db)): # Changed game_id to game_name
+    db_game = crud.get_board_game_by_name(db, name=game_name) # Use get_board_game_by_name
     if db_game is None:
-        raise HTTPException(status_code=404, detail="Board game not found")
+        raise HTTPException(status_code=404, detail=f"Board game '{game_name}' not found")
     return db_game
 
-@app.put("/api/boardgames/{game_id}", response_model=schemas.BoardGame, tags=["BoardGames"])
-async def update_board_game_endpoint(game_id: int, game: schemas.BoardGameUpdate, db: Session = Depends(get_db)):
-    db_game_check = crud.get_board_game(db, game_id=game_id) # Check for existence
-    if db_game_check is None:
-        raise HTTPException(status_code=404, detail="Board game not found to update")
+@app.put("/api/boardgames/{game_name}", response_model=schemas.BoardGame, tags=["BoardGames"])
+async def update_board_game_endpoint(game_name: str, game: schemas.BoardGameUpdate, db: Session = Depends(get_db)): # Changed game_id to game_name
+    try:
+        updated_game = crud.update_board_game(db=db, name=game_name, game_update=game)
+    except ValueError as e: # Catch potential ValueError from CRUD for name conflicts
+        raise HTTPException(status_code=400, detail=str(e))
 
-    updated_game = crud.update_board_game(db=db, game_id=game_id, game_update=game)
     if updated_game is None:
-        # Should not happen if check passed and crud is robust
-        raise HTTPException(status_code=404, detail="Board game disappeared during update")
+        # This implies the original game_name was not found by crud.update_board_game
+        raise HTTPException(status_code=404, detail=f"Board game '{game_name}' not found to update")
     return updated_game
 
-@app.delete("/api/boardgames/{game_id}", response_model=schemas.BoardGame, tags=["BoardGames"])
-async def delete_board_game_endpoint(game_id: int, db: Session = Depends(get_db)):
-    db_game_check = crud.get_board_game(db, game_id=game_id) # Check for existence
-    if db_game_check is None:
-        raise HTTPException(status_code=404, detail="Board game not found to delete")
-
-    deleted_game = crud.delete_board_game(db=db, game_id=game_id)
+@app.delete("/api/boardgames/{game_name}", response_model=schemas.BoardGame, tags=["BoardGames"])
+async def delete_board_game_endpoint(game_name: str, db: Session = Depends(get_db)): # Changed game_id to game_name
+    deleted_game = crud.delete_board_game(db=db, name=game_name) # Use name
     if deleted_game is None:
-        # Should not happen if check passed
-        raise HTTPException(status_code=404, detail="Board game could not be deleted or was already gone.")
+        raise HTTPException(status_code=404, detail=f"Board game '{game_name}' not found or could not be deleted")
     return deleted_game
