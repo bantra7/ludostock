@@ -36,6 +36,20 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 
 L'application sera alors accessible à l'adresse `http://localhost:8080`.
 
+## Testing
+
+To run the automated tests, navigate to the `backend` directory and use pytest:
+
+```bash
+cd backend  # If not already in the backend directory
+pytest
+```
+
+Ensure you have `pytest` installed in your Python environment. If not, you can typically install it using:
+```bash
+pip install pytest
+```
+
 ### Base de données
 
 L'application utilise DuckDB. Les migrations de base de données sont gérées avec Alembic.
