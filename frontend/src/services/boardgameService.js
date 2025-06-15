@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://backend:8080/api'; // Assuming backend runs on port 8000
+const API_BASE_URL = 'http://localhost:8080/api'; // Assuming backend runs on port 8000
 
 const boardgameService = {
   getAllBoardgames: () => {
