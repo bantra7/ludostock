@@ -7,7 +7,7 @@ from .database import SessionLocal, engine # engine is here
 
 # This line ensures that all tables are created based on models.
 # It should be called after all models are defined (which happens when `models` is imported)
-models.Base.metadata.create_all(bind=engine)
+# models.Base.metadata.create_all(bind=engine) # Commented out to prevent execution during test collection
 
 app = FastAPI()
 
@@ -20,26 +20,26 @@ def get_db():
         db.close()
 
 # Label Endpoints
-@app.post("/labels/", response_model=schemas.Label, tags=["Labels"])
+@app.post("/api/labels/", response_model=schemas.Label, tags=["Labels"])
 async def create_label_endpoint(label: schemas.LabelCreate, db: Session = Depends(get_db)):
     db_label = crud.get_label_by_name(db, name=label.name)
     if db_label:
         raise HTTPException(status_code=400, detail="Label with this name already exists")
     return crud.create_label(db=db, label=label)
 
-@app.get("/labels/", response_model=List[schemas.Label], tags=["Labels"])
+@app.get("/api/labels/", response_model=List[schemas.Label], tags=["Labels"])
 async def get_labels_endpoint(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     labels = crud.get_labels(db, skip=skip, limit=limit)
     return labels
 
-@app.get("/labels/{label_id}", response_model=schemas.Label, tags=["Labels"])
+@app.get("/api/labels/{label_id}", response_model=schemas.Label, tags=["Labels"])
 async def get_label_endpoint(label_id: int, db: Session = Depends(get_db)):
     db_label = crud.get_label(db, label_id=label_id)
     if db_label is None:
         raise HTTPException(status_code=404, detail="Label not found")
     return db_label
 
-@app.put("/labels/{label_id}", response_model=schemas.Label, tags=["Labels"])
+@app.put("/api/labels/{label_id}", response_model=schemas.Label, tags=["Labels"])
 async def update_label_endpoint(label_id: int, label: schemas.LabelCreate, db: Session = Depends(get_db)):
     # First, check if the label to update exists
     db_label_check = crud.get_label(db, label_id=label_id)
@@ -59,7 +59,7 @@ async def update_label_endpoint(label_id: int, label: schemas.LabelCreate, db: S
         raise HTTPException(status_code=404, detail="Label disappeared during update")
     return updated_label
 
-@app.delete("/labels/{label_id}", response_model=schemas.Label, tags=["Labels"])
+@app.delete("/api/labels/{label_id}", response_model=schemas.Label, tags=["Labels"])
 async def delete_label_endpoint(label_id: int, db: Session = Depends(get_db)):
     db_label = crud.get_label(db, label_id=label_id) # Check existence for 404
     if db_label is None:
@@ -73,24 +73,24 @@ async def delete_label_endpoint(label_id: int, db: Session = Depends(get_db)):
     return deleted_label
 
 # BoardGame Endpoints
-@app.post("/boardgames/", response_model=schemas.BoardGame, tags=["BoardGames"])
+@app.post("/api/boardgames/", response_model=schemas.BoardGame, tags=["BoardGames"])
 async def create_board_game_endpoint(game: schemas.BoardGameCreate, db: Session = Depends(get_db)):
     return crud.create_board_game(db=db, game=game)
 
-@app.get("/boardgames/", response_model=List[schemas.BoardGame], tags=["BoardGames"])
+@app.get("/api/boardgames/", response_model=List[schemas.BoardGame], tags=["BoardGames"])
 async def get_board_games_endpoint(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     games = crud.get_board_games(db, skip=skip, limit=limit)
     return games
 
-@app.get("/boardgames/{game_id}", response_model=schemas.BoardGame, tags=["BoardGames"])
+@app.get("/api/boardgames/{game_id}", response_model=schemas.BoardGame, tags=["BoardGames"])
 async def get_board_game_endpoint(game_id: int, db: Session = Depends(get_db)):
     db_game = crud.get_board_game(db, game_id=game_id)
     if db_game is None:
         raise HTTPException(status_code=404, detail="Board game not found")
     return db_game
 
-@app.put("/boardgames/{game_id}", response_model=schemas.BoardGame, tags=["BoardGames"])
-async def update_board_game_endpoint(game_id: int, game: schemas.BoardGameCreate, db: Session = Depends(get_db)):
+@app.put("/api/boardgames/{game_id}", response_model=schemas.BoardGame, tags=["BoardGames"])
+async def update_board_game_endpoint(game_id: int, game: schemas.BoardGameUpdate, db: Session = Depends(get_db)):
     db_game_check = crud.get_board_game(db, game_id=game_id) # Check for existence
     if db_game_check is None:
         raise HTTPException(status_code=404, detail="Board game not found to update")
@@ -101,7 +101,7 @@ async def update_board_game_endpoint(game_id: int, game: schemas.BoardGameCreate
         raise HTTPException(status_code=404, detail="Board game disappeared during update")
     return updated_game
 
-@app.delete("/boardgames/{game_id}", response_model=schemas.BoardGame, tags=["BoardGames"])
+@app.delete("/api/boardgames/{game_id}", response_model=schemas.BoardGame, tags=["BoardGames"])
 async def delete_board_game_endpoint(game_id: int, db: Session = Depends(get_db)):
     db_game_check = crud.get_board_game(db, game_id=game_id) # Check for existence
     if db_game_check is None:

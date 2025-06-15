@@ -9,7 +9,7 @@ def get_board_game(db: Session, game_id: int):
     return db.query(models.BoardGame).filter(models.BoardGame.id == game_id).first()
 
 def create_board_game(db: Session, game: schemas.BoardGameCreate):
-    game_data = game.dict() # Get all data from the input schema
+    game_data = game.model_dump() # Get all data from the input schema, updated to model_dump
     label_names = game_data.pop('labels', []) # Pop labels, default to empty list if not provided
 
     # Create BoardGame instance with remaining scalar fields from game_data
@@ -29,11 +29,11 @@ def create_board_game(db: Session, game: schemas.BoardGameCreate):
     db.refresh(db_game)
     return db_game
 
-def update_board_game(db: Session, game_id: int, game_update: schemas.BoardGameCreate):
+def update_board_game(db: Session, game_id: int, game_update: schemas.BoardGameUpdate): # Changed type hint
     db_game = db.query(models.BoardGame).filter(models.BoardGame.id == game_id).first()
     if db_game:
         # Get all fields from the update schema. `exclude_unset=True` means only provided fields are included.
-        update_data = game_update.dict(exclude_unset=True)
+        update_data = game_update.model_dump(exclude_unset=True) # updated to model_dump
 
         # Pop 'labels' for separate handling. If 'labels' is not in update_data, label_names will be None.
         label_names = update_data.pop('labels', None)
