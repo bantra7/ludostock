@@ -8,7 +8,7 @@ from .database import SessionLocal, engine # engine is here
 
 # This line ensures that all tables are created based on models.
 # It should be called after all models are defined (which happens when `models` is imported)
-# models.Base.metadata.create_all(bind=engine) # Commented out to prevent execution during test collection
+models.Base.metadata.create_all(bind=engine) # Commented out to prevent execution during test collection
 
 app = FastAPI()
 
