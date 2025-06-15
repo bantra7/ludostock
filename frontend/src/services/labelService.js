@@ -8,15 +8,15 @@ const labelService = {
   },
 
   createLabel: (labelData) => {
-    return axios.post(`${API_BASE_URL}/labels`, labelData);
+    return axios.post(`${API_BASE_URL}/labels/`, labelData); // Added trailing slash for consistency
   },
 
-  updateLabel: (id, labelData) => {
-    return axios.put(`${API_BASE_URL}/labels/${id}`, labelData);
+  updateLabel: (name, labelData) => { // Changed id to name
+    return axios.put(`${API_BASE_URL}/labels/${name}`, labelData); // Use name in URL
   },
 
-  deleteLabel: (id) => {
-    return axios.delete(`${API_BASE_URL}/labels/${id}`);
+  deleteLabel: (name) => { // Changed id to name
+    return axios.delete(`${API_BASE_URL}/labels/${name}`); // Use name in URL
   },
 };
 

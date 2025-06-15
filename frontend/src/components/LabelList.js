@@ -43,7 +43,7 @@ const LabelList = ({ onEdit, onDelete, refreshTrigger }) => {
   return (
     <Grid container spacing={3}>
       {labels.map((label) => (
-        <Grid item key={label.id} xs={12} sm={6} md={4} lg={3}>
+        <Grid item key={label.name} xs={12} sm={6} md={4} lg={3}> {/* Changed key to label.name */}
           <LabelCard label={label} onEdit={onEdit} onDelete={onDelete} />
         </Grid>
       ))}

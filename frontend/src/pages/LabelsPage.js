@@ -31,8 +31,8 @@ const LabelsPage = () => {
   const handleSubmitForm = async (labelData) => {
     setError(null);
     try {
-      if (editingLabel) {
-        await labelService.updateLabel(editingLabel.id, labelData);
+      if (editingLabel && editingLabel.name) { // Check for name to signify editing
+        await labelService.updateLabel(editingLabel.name, labelData);
       } else {
         await labelService.createLabel(labelData);
       }
@@ -44,11 +44,11 @@ const LabelsPage = () => {
     }
   };
 
-  const handleDeleteLabel = async (id) => {
+  const handleDeleteLabel = async (name) => { // Changed id to name
     setError(null);
     if (window.confirm('Are you sure you want to delete this label?')) {
       try {
-        await labelService.deleteLabel(id);
+        await labelService.deleteLabel(name); // Use name
         refreshLabels();
       } catch (err) {
         console.error("Delete error:", err.response || err.message || err);

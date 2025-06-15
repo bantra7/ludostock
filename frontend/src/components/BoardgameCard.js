@@ -14,21 +14,27 @@ const BoardgameCard = ({ boardgame, onEdit, onDelete }) => {
         <Typography gutterBottom variant="h5" component="h2">
           {boardgame.name}
         </Typography>
-        <Typography>
-          {boardgame.description}
+        <Typography variant="subtitle1" color="text.secondary">
+          Editor: {boardgame.editor_name}
         </Typography>
         <Typography color="text.secondary" sx={{ mt: 1 }}>
-          Players: {boardgame.min_players} - {boardgame.max_players}
+          Players: {boardgame.num_players_min} - {boardgame.num_players_max}
         </Typography>
         <Typography color="text.secondary">
-          Year: {boardgame.year_published}
+          Min Age: {boardgame.age_min}
         </Typography>
+        {boardgame.time_duration_mean && (
+          <Typography color="text.secondary">
+            Avg Playtime: {boardgame.time_duration_mean} min
+          </Typography>
+        )}
+        {/* Labels could be displayed here if desired, e.g., boardgame.labels.map(l => l.name).join(', ') */}
       </CardContent>
       <CardActions>
         <IconButton size="small" onClick={() => onEdit(boardgame)}>
           <EditIcon />
         </IconButton>
-        <IconButton size="small" onClick={() => onDelete(boardgame.id)}>
+        <IconButton size="small" onClick={() => onDelete(boardgame.name)}> {/* Changed to boardgame.name */}
           <DeleteIcon />
         </IconButton>
       </CardActions>

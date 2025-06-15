@@ -43,7 +43,7 @@ const BoardgameList = ({ onEdit, onDelete, refreshTrigger }) => {
   return (
     <Grid container spacing={3}>
       {boardgames.map((boardgame) => (
-        <Grid item key={boardgame.id} xs={12} sm={6} md={4} lg={3}>
+        <Grid item key={boardgame.name} xs={12} sm={6} md={4} lg={3}> {/* Changed key to boardgame.name */}
           <BoardgameCard boardgame={boardgame} onEdit={onEdit} onDelete={onDelete} />
         </Grid>
       ))}

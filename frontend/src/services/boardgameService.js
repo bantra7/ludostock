@@ -8,7 +8,7 @@ const boardgameService = {
   },
 
   createBoardgame: (boardgameData) => {
-    return axios.post(`${API_BASE_URL}/boardgames`, boardgameData);
+    return axios.post(`${API_BASE_URL}/boardgames/`, boardgameData); // Added trailing slash
   },
 
   updateBoardgame: (id, boardgameData) => {

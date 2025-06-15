@@ -11,22 +11,23 @@ import Box from '@mui/material/Box';
 // For simplicity, using TextField for hex color string for now.
 
 const LabelForm = ({ open, onClose, onSubmit, initialData }) => {
-  const [formData, setFormData] = useState({
+  const getInitialFormData = () => ({
     name: '',
-    color: '#ffffff', // Default to white
+    // color field removed
   });
 
+  const [formData, setFormData] = useState(getInitialFormData());
+
   useEffect(() => {
-    if (initialData) {
-      setFormData({
-        name: initialData.name || '',
-        color: initialData.color || '#ffffff',
-      });
-    } else {
-      setFormData({
-        name: '',
-        color: '#ffffff',
-      });
+    if (open) { // Reset form when dialog opens
+        if (initialData) {
+        setFormData({
+            name: initialData.name || '',
+            // color field removed
+        });
+        } else {
+        setFormData(getInitialFormData());
+        }
     }
   }, [initialData, open]);
 
@@ -36,16 +37,12 @@ const LabelForm = ({ open, onClose, onSubmit, initialData }) => {
   };
 
   const handleSubmit = () => {
-    if (!formData.name) {
-      alert('Label name is required'); // Basic validation
+    if (!formData.name || !formData.name.trim()) {
+      alert('Label name is required and cannot be empty.'); // Basic validation
       return;
     }
-    // Basic color validation (hex format)
-    if (!/^#[0-9A-F]{6}$/i.test(formData.color)) {
-        alert('Color must be a valid hex code (e.g., #RRGGBB)');
-        return;
-    }
-    onSubmit(formData);
+    // Color validation removed
+    onSubmit({ name: formData.name.trim() }); // Only submit name
   };
 
   return (
@@ -67,24 +64,7 @@ const LabelForm = ({ open, onClose, onSubmit, initialData }) => {
               required
             />
           </Grid>
-          <Grid item xs={12}>
-            <TextField
-              margin="dense"
-              name="color"
-              label="Color (hex, e.g., #FF5733)"
-              type="text" // Using text for hex input. Could use type="color" for a native picker.
-              fullWidth
-              variant="outlined"
-              value={formData.color}
-              onChange={handleChange}
-              required
-              InputLabelProps={{
-                shrink: true,
-              }}
-            />
-            {/* Simple color preview */}
-            <Box sx={{width: '100%', height: 30, backgroundColor: formData.color, mt: 1, border: '1px solid #ccc'}} />
-          </Grid>
+          {/* Grid item for color removed */}
         </Grid>
       </DialogContent>
       <DialogActions>
