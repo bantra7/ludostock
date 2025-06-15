@@ -33,6 +33,18 @@ class BoardGameBase(BaseModel):
 class BoardGameCreate(BoardGameBase):
     labels: List[str] = [] # List of label names, using typing.List
 
+class BoardGameUpdate(BaseModel): # Cannot inherit from BoardGameBase easily due to all fields needing to be Optional
+    name: Optional[str] = None
+    editor_name: Optional[str] = None
+    num_players_min: Optional[int] = None
+    num_players_max: Optional[int] = None
+    age_min: Optional[int] = None
+    time_duration_mean: Optional[int] = None
+    labels: Optional[List[str]] = None
+
+    class Config:
+        orm_mode = True # Good to have, though not strictly necessary for request body
+
 class BoardGame(BoardGameBase):
     id: int
     labels: List[Label] = [] # Nested Label schemas, using typing.List
