@@ -3,7 +3,6 @@ import Container from '@mui/material/Container';
 import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
 import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
 import Header from './components/Header';
 import BoardgamesPage from './pages/BoardgamesPage';
 import LabelsPage from './pages/LabelsPage'; // Import LabelsPage
