@@ -6,6 +6,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import Grid from '@mui/material/Grid';
+import Box from '@mui/material/Box';
 // For a basic color input, we can use TextField type="color" or a more advanced picker
 // For simplicity, using TextField for hex color string for now.
 
