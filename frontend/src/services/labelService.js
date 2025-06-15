@@ -4,7 +4,7 @@ const API_BASE_URL = 'http://localhost:8000/api'; // Assuming backend runs on po
 
 const labelService = {
   getAllLabels: () => {
-    return axios.get(`${API_BASE_URL}/labels`);
+    return axios.get(`${API_BASE_URL}/labels/`);
   },
 
   createLabel: (labelData) => {
