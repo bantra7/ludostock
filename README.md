@@ -1,4 +1,4 @@
-# boardgame-app
+# Ludostock
 
 Projet d'application de gestion d'une collection de jeux de société.
 
@@ -8,7 +8,7 @@ L'application Backend est développée en FastAPI. Elle fournit l'API pour gére
 
 ## Frontend
 
-L'application Frontend est développée en React. Elle offre une interface utilisateur pour interagir avec la collection de jeux
+L'application Frontend est développée en React. Elle offre une interface utilisateur pour interagir avec la collection de jeux.
 
 ## Running with Docker Compose
 
