@@ -61,7 +61,7 @@ const LabelsPage = () => {
     <Box sx={{ mt: 2, position: 'relative' }}>
       {error && (
         <Typography color="error" sx={{ mb: 2 }}>
-          Error: {error}
+          Erreur: {error}
         </Typography>
       )}
       <LabelList
