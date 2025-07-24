@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8080/api'; // Assuming backend runs on port 8000
+const API_BASE_URL = 'https://ludostock-backend-1015299081216.europe-west1.run.app/api'; // Assuming backend runs on port 8000
 
 const boardgameService = {
   getAllBoardgames: () => {
