@@ -6,7 +6,7 @@ Cette application backend est développée avec FastAPI et fournit une API pour 
 
 ### Prérequis
 
-- Python 3.7+
+- Python 3.11+
 - pip (gestionnaire de paquets Python)
 
 ### Installation des dépendances
@@ -17,7 +17,7 @@ Cette application backend est développée avec FastAPI et fournit une API pour 
    ```
 2. Installez les dépendances Python :
    ```bash
-   pip install -r requirements.txt
+   python -m pip install -r requirements.txt
    ```
 
 ### Exécution de l'application en mode développement
@@ -35,20 +35,6 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
 L'application sera alors accessible à l'adresse `http://localhost:8080`.
-
-## Testing
-
-To run the automated tests, navigate to the `backend` directory and use pytest:
-
-```bash
-cd backend  # If not already in the backend directory
-pytest
-```
-
-Ensure you have `pytest` installed in your Python environment. If not, you can typically install it using:
-```bash
-pip install pytest
-```
 
 ### Base de données
 
