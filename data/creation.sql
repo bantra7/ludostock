@@ -1,17 +1,16 @@
 -- ============================
--- TABLE PRINCIPALE : GAMES
+-- TABLE PRINCIPALE : GAMES (Catalogue global)
 -- ============================
 CREATE TABLE games (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     type TEXT NOT NULL CHECK (type IN ('game', 'extension')),
     extension_of_id INTEGER REFERENCES games(id) ON DELETE SET NULL,
-    year INTEGER,
+    creation_year INTEGER,
     min_players INTEGER,
     max_players INTEGER,
     min_age INTEGER,
     duration_minutes INTEGER,
-    language TEXT,
     url TEXT,
     image_url TEXT
 );
@@ -67,25 +66,53 @@ CREATE TABLE game_distributors (
 );
 
 -- ============================
--- UTILISATEURS & LOCALISATIONS
+-- UTILISATEURS (Google Auth via Supabase)
 -- ============================
 CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL
-);
-
-CREATE TABLE locations (
-    id SERIAL PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL
+    id UUID PRIMARY KEY, -- ID fourni par Supabase Auth
+    email TEXT UNIQUE NOT NULL,
+    username TEXT
 );
 
 -- ============================
--- COLLECTION DES UTILISATEURS
+-- COLLECTIONS DES UTILISATEURS
 -- ============================
 CREATE TABLE collections (
     id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    owner_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT
+);
+
+-- ============================
+-- PARTAGE DE COLLECTIONS
+-- ============================
+CREATE TABLE collection_shares (
+    id SERIAL PRIMARY KEY,
+    collection_id INTEGER REFERENCES collections(id) ON DELETE CASCADE,
+    shared_with UUID REFERENCES users(id) ON DELETE CASCADE,
+    permission TEXT NOT NULL CHECK (permission IN ('read', 'write')),
+    UNIQUE (collection_id, shared_with)
+);
+
+-- ============================
+-- LIEUX (propres à chaque utilisateur)
+-- ============================
+CREATE TABLE user_locations (
+    id SERIAL PRIMARY KEY,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    UNIQUE (user_id, name)
+);
+
+-- ============================
+-- JEUX DANS UNE COLLECTION
+-- ============================
+CREATE TABLE collection_games (
+    id SERIAL PRIMARY KEY,
+    collection_id INTEGER REFERENCES collections(id) ON DELETE CASCADE,
     game_id INTEGER REFERENCES games(id) ON DELETE CASCADE,
-    location_id INTEGER REFERENCES locations(id) ON DELETE SET NULL,
-    UNIQUE (user_id, game_id)
+    location_id INTEGER REFERENCES user_locations(id) ON DELETE SET NULL,
+    quantity INTEGER DEFAULT 1,
+    UNIQUE (collection_id, game_id, location_id)
 );
