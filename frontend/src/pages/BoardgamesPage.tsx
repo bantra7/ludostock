@@ -4,19 +4,24 @@ import Fab from '@mui/material/Fab';
 import AddIcon from '@mui/icons-material/Add';
 import BoardgameList from '../components/BoardgameList';
 import BoardgameForm from '../components/BoardgameForm';
-import boardgameService from '../services/boardgameService';
-import Typography from '@mui/material/Typography'; // For error messages
+import gameService from '../services/gameService'; // Utilise le service API FastAPI
+import Typography from '@mui/material/Typography';
+import { useSession } from '@supabase/auth-helpers-react'; // Si tu utilises supabase-auth-helpers
 
 const BoardgamesPage = () => {
   const [formOpen, setFormOpen] = useState(false);
   const [editingBoardgame, setEditingBoardgame] = useState(null);
-  const [refreshTrigger, setRefreshTrigger] = useState(0); // To trigger list refresh
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [error, setError] = useState(null);
+
+  // Récupère le token utilisateur Supabase
+  const session = useSession();
+  const token = session?.access_token;
 
   const handleOpenForm = (boardgame = null) => {
     setEditingBoardgame(boardgame);
     setFormOpen(true);
-    setError(null); // Clear previous errors
+    setError(null);
   };
 
   const handleCloseForm = () => {
@@ -31,10 +36,10 @@ const BoardgamesPage = () => {
   const handleSubmitForm = async (boardgameData) => {
     setError(null);
     try {
-      if (editingBoardgame && editingBoardgame.name) { // Check for name to signify editing
-        await boardgameService.updateBoardgame(editingBoardgame.name, boardgameData);
+      if (editingBoardgame && editingBoardgame.id) {
+        await gameService.updateGame(editingBoardgame.id, boardgameData, token);
       } else {
-        await boardgameService.createBoardgame(boardgameData);
+        await gameService.createGame(boardgameData, token);
       }
       refreshBoardgames();
       handleCloseForm();
@@ -44,11 +49,11 @@ const BoardgamesPage = () => {
     }
   };
 
-  const handleDeleteBoardgame = async (name) => { // Changed id to name
+  const handleDeleteBoardgame = async (id) => {
     setError(null);
     if (window.confirm('Are you sure you want to delete this boardgame?')) {
       try {
-        await boardgameService.deleteBoardgame(name); // Use name
+        await gameService.deleteGame(id, token);
         refreshBoardgames();
       } catch (err) {
         console.error("Delete error:", err.response || err.message || err);
@@ -65,9 +70,10 @@ const BoardgamesPage = () => {
         </Typography>
       )}
       <BoardgameList
-        onEdit={(boardgame) => handleOpenForm(boardgame)}
+        onEdit={handleOpenForm}
         onDelete={handleDeleteBoardgame}
         refreshTrigger={refreshTrigger}
+        token={token}
       />
       <BoardgameForm
         open={formOpen}
