@@ -1,109 +1,295 @@
 from sqlalchemy.orm import Session
 from . import models, schemas
 
-# BoardGame CRUD functions
-def get_board_games(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.BoardGame).offset(skip).limit(limit).all()
+# ============================
+# GAME CRUD
+# ============================
+def get_games(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.Game).offset(skip).limit(limit).all()
 
-def get_board_game_by_name(db: Session, name: str): # Renamed from get_board_game, param changed from game_id
-    return db.query(models.BoardGame).filter(models.BoardGame.name == name).first()
+def get_game(db: Session, game_id: int):
+    return db.query(models.Game).filter(models.Game.id == game_id).first()
 
-def create_board_game(db: Session, game: schemas.BoardGameCreate):
-    game_data = game.model_dump() # Get all data from the input schema, updated to model_dump
-    label_names = game_data.pop('labels', []) # Pop labels, default to empty list if not provided
+def create_game(db: Session, game: schemas.GameCreate):
+    game_data = game.model_dump()
+    author_names = game_data.pop('authors', [])
+    artist_names = game_data.pop('artists', [])
+    editor_names = game_data.pop('editors', [])
+    distributor_names = game_data.pop('distributors', [])
 
-    # Create BoardGame instance with remaining scalar fields from game_data
-    # This assumes BoardGameCreate has fields corresponding to BoardGame model's scalar attributes
-    db_game = models.BoardGame(**game_data)
+    db_game = models.Game(**game_data)
 
-    # Process labels
-    for label_name in label_names:
-        db_label = get_label_by_name(db, name=label_name) # Assumes get_label_by_name is defined
-        if db_label is None:
-            # Assumes create_label is defined and handles commit for the new label
-            db_label = create_label(db, schemas.LabelCreate(name=label_name))
-        db_game.labels.append(db_label)
+    # Authors
+    for name in author_names:
+        db_author = db.query(models.Author).filter(models.Author.name == name).first()
+        if not db_author:
+            db_author = models.Author(name=name)
+            db.add(db_author)
+            db.commit()
+            db.refresh(db_author)
+        db_game.authors.append(db_author)
+
+    # Artists
+    for name in artist_names:
+        db_artist = db.query(models.Artist).filter(models.Artist.name == name).first()
+        if not db_artist:
+            db_artist = models.Artist(name=name)
+            db.add(db_artist)
+            db.commit()
+            db.refresh(db_artist)
+        db_game.artists.append(db_artist)
+
+    # Editors
+    for name in editor_names:
+        db_editor = db.query(models.Editor).filter(models.Editor.name == name).first()
+        if not db_editor:
+            db_editor = models.Editor(name=name)
+            db.add(db_editor)
+            db.commit()
+            db.refresh(db_editor)
+        db_game.editors.append(db_editor)
+
+    # Distributors
+    for name in distributor_names:
+        db_distributor = db.query(models.Distributor).filter(models.Distributor.name == name).first()
+        if not db_distributor:
+            db_distributor = models.Distributor(name=name)
+            db.add(db_distributor)
+            db.commit()
+            db.refresh(db_distributor)
+        db_game.distributors.append(db_distributor)
 
     db.add(db_game)
     db.commit()
     db.refresh(db_game)
     return db_game
 
-def update_board_game(db: Session, name: str, game_update: schemas.BoardGameUpdate): # Renamed param from game_id
-    db_game = db.query(models.BoardGame).filter(models.BoardGame.name == name).first() # Filter by name
-    if db_game:
-        update_data = game_update.model_dump(exclude_unset=True)
-
-        label_names = update_data.pop('labels', None)
-
-        # Handle potential primary key (name) change
-        if 'name' in update_data and update_data['name'] != name:
-            new_name = update_data['name']
-            existing_game_with_new_name = db.query(models.BoardGame).filter(models.BoardGame.name == new_name).first()
-            if existing_game_with_new_name:
-                raise ValueError(f"Board game with name '{new_name}' already exists.")
-            # db_game.name = new_name # This will be handled by setattr below if 'name' is in update_data
-
-        # Update scalar fields on the db_game model
-        for key, value in update_data.items():
-            setattr(db_game, key, value)
-
-        # Update labels only if 'labels' key was present in game_update payload
-        if label_names is not None: # This means 'labels' was part of the request
-            new_labels = []
-            for label_name in label_names: # label_names could be an empty list
-                db_label = get_label_by_name(db, name=label_name)
-                if db_label is None:
-                    db_label = create_label(db, schemas.LabelCreate(name=label_name))
-                new_labels.append(db_label)
-            db_game.labels = new_labels # Assign the new list of label objects
-
-        db.commit()
-        db.refresh(db_game)
-    return db_game
-
-def delete_board_game(db: Session, name: str): # Renamed param from game_id
-    db_game = db.query(models.BoardGame).filter(models.BoardGame.name == name).first() # Filter by name
+def delete_game(db: Session, game_id: int):
+    db_game = db.query(models.Game).filter(models.Game.id == game_id).first()
     if db_game:
         db.delete(db_game)
         db.commit()
     return db_game
 
-# Label CRUD functions
+# ============================
+# AUTHOR CRUD
+# ============================
+def get_authors(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.Author).offset(skip).limit(limit).all()
 
-# get_label function (by id) removed as name is now the PK.
-# get_label_by_name is the function to use for fetching a single label.
-def get_label_by_name(db: Session, name: str):
-    return db.query(models.Label).filter(models.Label.name == name).first()
+def get_author(db: Session, author_id: int):
+    return db.query(models.Author).filter(models.Author.id == author_id).first()
 
-def get_labels(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.Label).offset(skip).limit(limit).all()
-
-def create_label(db: Session, label: schemas.LabelCreate):
-    db_label = models.Label(name=label.name)
-    db.add(db_label)
+def create_author(db: Session, author: schemas.AuthorCreate):
+    db_author = models.Author(name=author.name)
+    db.add(db_author)
     db.commit()
-    db.refresh(db_label)
-    return db_label
+    db.refresh(db_author)
+    return db_author
 
-def update_label(db: Session, name: str, label_update: schemas.LabelCreate):
-    db_label = db.query(models.Label).filter(models.Label.name == name).first()
-    if db_label:
-        if name != label_update.name:
-            # Primary key is being changed (renaming the label)
-            existing_label_with_new_name = db.query(models.Label).filter(models.Label.name == label_update.name).first()
-            if existing_label_with_new_name:
-                raise ValueError(f"Label with name '{label_update.name}' already exists.")
-            db_label.name = label_update.name
-        # If there were other fields on Label model, they would be updated here, e.g.:
-        # db_label.description = label_update.description
+def delete_author(db: Session, author_id: int):
+    db_author = db.query(models.Author).filter(models.Author.id == author_id).first()
+    if db_author:
+        db.delete(db_author)
         db.commit()
-        db.refresh(db_label)
-    return db_label
+    return db_author
 
-def delete_label(db: Session, name: str):
-    db_label = db.query(models.Label).filter(models.Label.name == name).first()
-    if db_label:
-        db.delete(db_label)
+# ============================
+# ARTIST CRUD
+# ============================
+def get_artists(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.Artist).offset(skip).limit(limit).all()
+
+def get_artist(db: Session, artist_id: int):
+    return db.query(models.Artist).filter(models.Artist.id == artist_id).first()
+
+def create_artist(db: Session, artist: schemas.ArtistCreate):
+    db_artist = models.Artist(name=artist.name)
+    db.add(db_artist)
+    db.commit()
+    db.refresh(db_artist)
+    return db_artist
+
+def delete_artist(db: Session, artist_id: int):
+    db_artist = db.query(models.Artist).filter(models.Artist.id == artist_id).first()
+    if db_artist:
+        db.delete(db_artist)
         db.commit()
-    return db_label # Returns the deleted object or None
+    return db_artist
+
+# ============================
+# EDITOR CRUD
+# ============================
+def get_editors(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.Editor).offset(skip).limit(limit).all()
+
+def get_editor(db: Session, editor_id: int):
+    return db.query(models.Editor).filter(models.Editor.id == editor_id).first()
+
+def create_editor(db: Session, editor: schemas.EditorCreate):
+    db_editor = models.Editor(name=editor.name)
+    db.add(db_editor)
+    db.commit()
+    db.refresh(db_editor)
+    return db_editor
+
+def delete_editor(db: Session, editor_id: int):
+    db_editor = db.query(models.Editor).filter(models.Editor.id == editor_id).first()
+    if db_editor:
+        db.delete(db_editor)
+        db.commit()
+    return db_editor
+
+# ============================
+# DISTRIBUTOR CRUD
+# ============================
+def get_distributors(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.Distributor).offset(skip).limit(limit).all()
+
+def get_distributor(db: Session, distributor_id: int):
+    return db.query(models.Distributor).filter(models.Distributor.id == distributor_id).first()
+
+def create_distributor(db: Session, distributor: schemas.DistributorCreate):
+    db_distributor = models.Distributor(name=distributor.name)
+    db.add(db_distributor)
+    db.commit()
+    db.refresh(db_distributor)
+    return db_distributor
+
+def delete_distributor(db: Session, distributor_id: int):
+    db_distributor = db.query(models.Distributor).filter(models.Distributor.id == distributor_id).first()
+    if db_distributor:
+        db.delete(db_distributor)
+        db.commit()
+    return db_distributor
+
+# ============================
+# USER CRUD
+# ============================
+def get_users(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.User).offset(skip).limit(limit).all()
+
+def get_user(db: Session, user_id):
+    return db.query(models.User).filter(models.User.id == user_id).first()
+
+def create_user(db: Session, user: schemas.UserCreate):
+    db_user = models.User(email=user.email, username=user.username)
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+def delete_user(db: Session, user_id):
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if db_user:
+        db.delete(db_user)
+        db.commit()
+    return db_user
+
+# ============================
+# COLLECTION CRUD
+# ============================
+def get_collections(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.Collection).offset(skip).limit(limit).all()
+
+def get_collection(db: Session, collection_id: int):
+    return db.query(models.Collection).filter(models.Collection.id == collection_id).first()
+
+def create_collection(db: Session, collection: schemas.CollectionCreate, owner_id):
+    db_collection = models.Collection(
+        name=collection.name,
+        description=collection.description,
+        owner_id=owner_id
+    )
+    db.add(db_collection)
+    db.commit()
+    db.refresh(db_collection)
+    return db_collection
+
+def delete_collection(db: Session, collection_id: int):
+    db_collection = db.query(models.Collection).filter(models.Collection.id == collection_id).first()
+    if db_collection:
+        db.delete(db_collection)
+        db.commit()
+    return db_collection
+
+# ============================
+# COLLECTION SHARE CRUD
+# ============================
+def get_collection_shares(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.CollectionShare).offset(skip).limit(limit).all()
+
+def get_collection_share(db: Session, share_id: int):
+    return db.query(models.CollectionShare).filter(models.CollectionShare.id == share_id).first()
+
+def create_collection_share(db: Session, share: schemas.CollectionShareCreate, collection_id: int):
+    db_share = models.CollectionShare(
+        collection_id=collection_id,
+        shared_with=share.shared_with,
+        permission=share.permission
+    )
+    db.add(db_share)
+    db.commit()
+    db.refresh(db_share)
+    return db_share
+
+def delete_collection_share(db: Session, share_id: int):
+    db_share = db.query(models.CollectionShare).filter(models.CollectionShare.id == share_id).first()
+    if db_share:
+        db.delete(db_share)
+        db.commit()
+    return db_share
+
+# ============================
+# USER LOCATION CRUD
+# ============================
+def get_user_locations(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.UserLocation).offset(skip).limit(limit).all()
+
+def get_user_location(db: Session, location_id: int):
+    return db.query(models.UserLocation).filter(models.UserLocation.id == location_id).first()
+
+def create_user_location(db: Session, location: schemas.UserLocationCreate, user_id):
+    db_location = models.UserLocation(
+        name=location.name,
+        user_id=user_id
+    )
+    db.add(db_location)
+    db.commit()
+    db.refresh(db_location)
+    return db_location
+
+def delete_user_location(db: Session, location_id: int):
+    db_location = db.query(models.UserLocation).filter(models.UserLocation.id == location_id).first()
+    if db_location:
+        db.delete(db_location)
+        db.commit()
+    return db_location
+
+# ============================
+# COLLECTION GAME CRUD
+# ============================
+def get_collection_games(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.CollectionGame).offset(skip).limit(limit).all()
+
+def get_collection_game(db: Session, collection_game_id: int):
+    return db.query(models.CollectionGame).filter(models.CollectionGame.id == collection_game_id).first()
+
+def create_collection_game(db: Session, collection_game: schemas.CollectionGameCreate):
+    db_collection_game = models.CollectionGame(
+        collection_id=collection_game.collection_id,
+        game_id=collection_game.game_id,
+        location_id=collection_game.location_id,
+        quantity=collection_game.quantity
+    )
+    db.add(db_collection_game)
+    db.commit()
+    db.refresh(db_collection_game)
+    return db_collection_game
+
+def delete_collection_game(db: Session, collection_game_id: int):
+    db_collection_game = db.query(models.CollectionGame).filter(models.CollectionGame.id == collection_game_id).first()
+    if db_collection_game:
+        db.delete(db_collection_game)
+        db.commit()
+    return db_collection_game

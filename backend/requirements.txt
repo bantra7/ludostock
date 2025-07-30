@@ -1,9 +1,9 @@
 fastapi
 uvicorn[standard]
-python-dotenv
 fastapi-sqlalchemy
 sqlalchemy
 alembic
 pylint
 duckdb
 duckdb-engine
+environs

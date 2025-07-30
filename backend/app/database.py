@@ -1,13 +1,28 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from environs import Env
 
-SQLALCHEMY_DATABASE_URL = "duckdb:////mnt/data/ludostock.db"
+env = Env()
+env.read_env()
 
+SQLALCHEMY_DATABASE_URL = env.str("DATABASE_URL", "duckdb:////mnt/data/ludostock.db")
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL
 )
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
+
+def init_db(sql_path: str):
+    with open(sql_path, "r", encoding="utf-8") as f:
+        sql = f.read()
+    print(sql)
+    with engine.connect() as conn:
+        for statement in sql.split(";"):
+            stmt = statement.strip()
+            if stmt:
+                conn.execute(text(stmt))
+                conn.commit()
