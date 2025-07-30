@@ -7,3 +7,4 @@ pylint
 duckdb
 duckdb-engine
 environs
+requests
