@@ -8,7 +8,7 @@ from . import crud, schemas
 from .database import SessionLocal, init_db
 
 env = Env()
-env.read_env()
+env.read_env(env.str('ENV_PATH', '.env'))
 
 db_path = env.str("DATABASE_URL").replace("duckdb:///", "")
 sql_file = env.str("SQL_CREATION_FILE")

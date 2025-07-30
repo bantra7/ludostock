@@ -4,7 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from environs import Env
 
 env = Env()
-env.read_env()
+env.read_env(env.str('ENV_PATH', '.env'))
 
 SQLALCHEMY_DATABASE_URL = env.str("DATABASE_URL", "duckdb:////mnt/data/ludostock.db")
 
