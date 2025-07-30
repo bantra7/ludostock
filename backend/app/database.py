@@ -19,7 +19,6 @@ Base = declarative_base()
 def init_db(sql_path: str):
     with open(sql_path, "r", encoding="utf-8") as f:
         sql = f.read()
-    print(sql)
     with engine.connect() as conn:
         for statement in sql.split(";"):
             stmt = statement.strip()
