@@ -1,0 +1,10 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"  # chemin du fichier package.json
+    schedule:
+      interval: "daily"  # daily, weekly ou monthly
+  - package-ecosystem: "pip"
+    directory: "/backend"  # chemin du fichier requirements.txt
+    schedule:
+      interval: "daily"  # daily, weekly ou monthly
