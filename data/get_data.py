@@ -1,4 +1,6 @@
 import time
+import sys
+from loguru import logger
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any
 
@@ -7,8 +9,17 @@ from bs4 import BeautifulSoup
 import requests
 from urllib.parse import urlparse, parse_qs, unquote
 
+NB_PAGES = 1060
+TRICTRAC_URL = "https://trictrac.net/jeux/"
 BROKEN_URLS = []
-FILENAME = "trictac_data.csv"
+BROKEN_URLS_FILE = "broken_urls.txt"
+FILENAME = "trictac_data_games.csv"
+
+# Configuration du logger
+LOGER_LEVEL = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
+logger.remove()
+logger.add(sys.stdout, level=LOGER_LEVEL)
+
 
 def scrape_urls_en_parallele(urls: List[str], max_workers: int = 10) -> List[Dict[str, Any]]:
     """
@@ -28,7 +39,7 @@ def scrape_urls_en_parallele(urls: List[str], max_workers: int = 10) -> List[Dic
             for result in executor.map(extraire_infos_trictrac, urls):
                 jeux.append(result)
         except Exception:
-            print(f"Erreur dans les urls suivantes : {urls}")
+            logger.error(f"Erreur dans les urls suivantes : {urls}")
             BROKEN_URLS += urls
 
     return jeux
@@ -44,11 +55,11 @@ def charger_tous_les_jeux(i: int) -> List[str]:
     Returns:
         List[str]: Liste des URLs des jeux trouvés sur la page.
     """
-    print(f"📦 Chargement de la page {i}...")
-    url = f"https://trictrac.net/jeux/{i}"
+    logger.info(f"📦 Chargement de la page {i}...")
+    url = f"{TRICTRAC_URL}/{i}"
     response = requests.get(url)
     if response.status_code != 200:
-        print(f"❌ Erreur de chargement : {url}")
+        logger.error(f"❌ Erreur de chargement : {url}")
         return []
 
     soup = BeautifulSoup(response.text, "html.parser")
@@ -58,7 +69,7 @@ def charger_tous_les_jeux(i: int) -> List[str]:
     for carte in cartes:
         urls.append(carte['href'])
 
-    print(f"🔎 {len(urls)} jeux trouvés sur la page {i}.")
+    logger.info(f"🔎 {len(urls)} jeux trouvés sur la page {i}.")
     return urls
 
 
@@ -91,18 +102,22 @@ def extraire_infos_trictrac(url: str) -> Dict[str, Any]:
         try:
             label = row.select_one("th").text.strip().replace(" :", "")
             value = row.select_one("td").text.strip()
+            logger.debug(f"🔍 {label}: {value}")
             infos[label] = value
         except Exception:
             pass
 
     try:
-        contributeurs = soup.select("div.style_conceptorsSpecs___QBek[title]")
+        contributeurs = soup.select("span.style_conceptorsSpecs___QBek[title]")
+        logger.debug(f"👥 Contributeurs trouvés : {len(contributeurs)}")
         for bloc in contributeurs:
             titre = bloc.get("title").strip()
             noms = [a.text.strip() for a in bloc.select("a")]
             if noms:
+                logger.debug(f"👥 {titre}: {', '.join(noms)}")
                 infos[titre] = " / ".join(noms)
     except Exception:
+        logger.error(f"Erreur lors de l'extraction des contributeurs pour {url}")
         pass
     img = soup.select_one("img[itemprop='image']")
     src = img.get("src") or ""
@@ -126,16 +141,16 @@ def scrape_tous_les_jeux(j_start: int) -> pd.DataFrame:
     start = time.time()
     jeux = []
     try:
-        for j in range(j_start, 1061):
+        for j in range(j_start, NB_PAGES+1):
             urls = charger_tous_les_jeux(j)
 
             jeux += [{**d, 'J': j} for d in scrape_urls_en_parallele(urls)]
             elapsed = time.time() - start
             avg_per_iter = elapsed / j
             remaining = avg_per_iter * (1060 - j)
-            print(f"🔁 {j}/1060 Already {len(jeux)} games - Temps écoulé : {elapsed:.1f}s - Temps restant estimé : {remaining:.1f}s")
+            logger.info(f"🔁 {j}/1060 Already {len(jeux)} games - Temps écoulé : {elapsed:.1f}s - Temps restant estimé : {remaining:.1f}s")
     except Exception as e:
-        print(e)
+        logger.error(e)
     finally:
         return pd.DataFrame(jeux)
 
@@ -148,7 +163,7 @@ if __name__ == "__main__":
     """
     df = scrape_tous_les_jeux(j_start=1)
     df.to_csv(FILENAME, index=False)
-    print("✅ Données enregistrées dans '{FILENAME}'")
-    with open("broken_urls.txt", "w", encoding="utf-8") as f:
+    logger.info(f"✅ Données enregistrées dans {FILENAME}")
+    with open(BROKEN_URLS_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(BROKEN_URLS))
-    print("✅ Urls cassées enregistrées dans 'broken_urls.txt'")
+    logger.info("✅ Urls cassées enregistrées dans {BROKEN_URLS_FILE}")
