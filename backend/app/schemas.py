@@ -18,17 +18,17 @@ class GameBase(BaseModel):
     image_url: Optional[str] = None
 
 class GameCreate(GameBase):
-    authors: Optional[List[str]] = []
-    artists: Optional[List[str]] = []
-    editors: Optional[List[str]] = []
-    distributors: Optional[List[str]] = []
+    authors: List[str] = Field(default_factory=list)
+    artists: List[str] = Field(default_factory=list)
+    editors: List[str] = Field(default_factory=list)
+    distributors: List[str] = Field(default_factory=list)
 
 class Game(GameBase):
     id: int
-    authors: List["Author"] = []
-    artists: List["Artist"] = []
-    editors: List["Editor"] = []
-    distributors: List["Distributor"] = []
+    authors: List["Author"] = Field(default_factory=list)
+    artists: List["Artist"] = Field(default_factory=list)
+    editors: List["Editor"] = Field(default_factory=list)
+    distributors: List["Distributor"] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
@@ -109,8 +109,8 @@ class Collection(CollectionBase):
     id: int
     owner_id: UUID
     owner: Optional[User] = None
-    games: List["CollectionGame"] = []
-    shares: List["CollectionShare"] = []
+    games: List["CollectionGame"] = Field(default_factory=list)
+    shares: List["CollectionShare"] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

@@ -1,5 +1,28 @@
+from uuid import UUID, uuid4
+
+from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from . import models, schemas
+
+
+def _commit_or_409(db: Session, detail: str):
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=detail) from exc
+
+
+def _get_or_create_named_entity(db: Session, model, name: str):
+    entity = db.query(model).filter(model.name == name).first()
+    if entity:
+        return entity
+
+    entity = model(name=name)
+    db.add(entity)
+    db.flush()
+    return entity
 
 # ============================
 # GAME CRUD
@@ -18,49 +41,26 @@ def create_game(db: Session, game: schemas.GameCreate):
     distributor_names = game_data.pop('distributors', [])
 
     db_game = models.Game(**game_data)
-
-    # Authors
-    for name in author_names:
-        db_author = db.query(models.Author).filter(models.Author.name == name).first()
-        if not db_author:
-            db_author = models.Author(name=name)
-            db.add(db_author)
-            db.commit()
-            db.refresh(db_author)
-        db_game.authors.append(db_author)
-
-    # Artists
-    for name in artist_names:
-        db_artist = db.query(models.Artist).filter(models.Artist.name == name).first()
-        if not db_artist:
-            db_artist = models.Artist(name=name)
-            db.add(db_artist)
-            db.commit()
-            db.refresh(db_artist)
-        db_game.artists.append(db_artist)
-
-    # Editors
-    for name in editor_names:
-        db_editor = db.query(models.Editor).filter(models.Editor.name == name).first()
-        if not db_editor:
-            db_editor = models.Editor(name=name)
-            db.add(db_editor)
-            db.commit()
-            db.refresh(db_editor)
-        db_game.editors.append(db_editor)
-
-    # Distributors
-    for name in distributor_names:
-        db_distributor = db.query(models.Distributor).filter(models.Distributor.name == name).first()
-        if not db_distributor:
-            db_distributor = models.Distributor(name=name)
-            db.add(db_distributor)
-            db.commit()
-            db.refresh(db_distributor)
-        db_game.distributors.append(db_distributor)
-
     db.add(db_game)
-    db.commit()
+
+    try:
+        for name in author_names:
+            db_game.authors.append(_get_or_create_named_entity(db, models.Author, name))
+
+        for name in artist_names:
+            db_game.artists.append(_get_or_create_named_entity(db, models.Artist, name))
+
+        for name in editor_names:
+            db_game.editors.append(_get_or_create_named_entity(db, models.Editor, name))
+
+        for name in distributor_names:
+            db_game.distributors.append(_get_or_create_named_entity(db, models.Distributor, name))
+
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Game could not be created") from exc
+
     db.refresh(db_game)
     return db_game
 
@@ -83,7 +83,7 @@ def get_author(db: Session, author_id: int):
 def create_author(db: Session, author: schemas.AuthorCreate):
     db_author = models.Author(name=author.name)
     db.add(db_author)
-    db.commit()
+    _commit_or_409(db, "Author with this name already exists")
     db.refresh(db_author)
     return db_author
 
@@ -106,7 +106,7 @@ def get_artist(db: Session, artist_id: int):
 def create_artist(db: Session, artist: schemas.ArtistCreate):
     db_artist = models.Artist(name=artist.name)
     db.add(db_artist)
-    db.commit()
+    _commit_or_409(db, "Artist with this name already exists")
     db.refresh(db_artist)
     return db_artist
 
@@ -129,7 +129,7 @@ def get_editor(db: Session, editor_id: int):
 def create_editor(db: Session, editor: schemas.EditorCreate):
     db_editor = models.Editor(name=editor.name)
     db.add(db_editor)
-    db.commit()
+    _commit_or_409(db, "Editor with this name already exists")
     db.refresh(db_editor)
     return db_editor
 
@@ -152,7 +152,7 @@ def get_distributor(db: Session, distributor_id: int):
 def create_distributor(db: Session, distributor: schemas.DistributorCreate):
     db_distributor = models.Distributor(name=distributor.name)
     db.add(db_distributor)
-    db.commit()
+    _commit_or_409(db, "Distributor with this name already exists")
     db.refresh(db_distributor)
     return db_distributor
 
@@ -172,10 +172,10 @@ def get_users(db: Session, skip: int = 0, limit: int = 100):
 def get_user(db: Session, user_id):
     return db.query(models.User).filter(models.User.id == user_id).first()
 
-def create_user(db: Session, user: schemas.UserCreate):
-    db_user = models.User(email=user.email, username=user.username)
+def create_user(db: Session, user: schemas.UserCreate, user_id: UUID | None = None):
+    db_user = models.User(id=user_id or uuid4(), email=user.email, username=user.username)
     db.add(db_user)
-    db.commit()
+    _commit_or_409(db, "User with this email already exists")
     db.refresh(db_user)
     return db_user
 
@@ -229,7 +229,7 @@ def create_collection_share(db: Session, share: schemas.CollectionShareCreate, c
         permission=share.permission
     )
     db.add(db_share)
-    db.commit()
+    _commit_or_409(db, "Collection share already exists or is invalid")
     db.refresh(db_share)
     return db_share
 
@@ -255,7 +255,7 @@ def create_user_location(db: Session, location: schemas.UserLocationCreate, user
         user_id=user_id
     )
     db.add(db_location)
-    db.commit()
+    _commit_or_409(db, "User location already exists or is invalid")
     db.refresh(db_location)
     return db_location
 
@@ -283,7 +283,7 @@ def create_collection_game(db: Session, collection_game: schemas.CollectionGameC
         quantity=collection_game.quantity
     )
     db.add(db_collection_game)
-    db.commit()
+    _commit_or_409(db, "Collection game already exists or is invalid")
     db.refresh(db_collection_game)
     return db_collection_game
 

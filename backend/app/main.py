@@ -2,6 +2,7 @@ from fastapi import Depends, FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import os
+from uuid import UUID
 from environs import Env
 from sqlalchemy.orm import Session
 import requests
@@ -16,9 +17,11 @@ env.read_env(env_path)
 DB_PATH = env.str("DATABASE_URL").replace("duckdb:///", "")
 SQL_FILE = env.str("SQL_CREATION_FILE")
 ENVIRONMENT = env.str("ENVIRONMENT", "dev")
-SUPABASE_URL = env.str("SUPABASE_URL")
+SUPABASE_URL = env.str("SUPABASE_URL", "")
 SUPABASE_JWT_ENDPOINT = f"{SUPABASE_URL}/auth/v1/user"
 ALLOW_ORIGINS = env.list("ALLOW_ORIGINS", ["*"])
+AUTH_DISABLED = env.bool("DISABLE_AUTH", False)
+SUPABASE_TIMEOUT_SECONDS = env.float("SUPABASE_TIMEOUT_SECONDS", 5.0)
 
 if not os.path.exists(DB_PATH):
     print("Initialisation de la base de donnée...")
@@ -39,17 +42,40 @@ app.add_middleware(
 )
 
 def verify_supabase_token(authorization: Optional[str] = Header(None)):
-    if ENVIRONMENT != "prod":
+    if AUTH_DISABLED:
         return {}
-    else:
-        if not authorization or not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-        token = authorization.split(" ", 1)[1]
-        headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(SUPABASE_JWT_ENDPOINT, headers=headers)
-        if response.status_code != 200:
-            raise HTTPException(status_code=401, detail="Invalid Supabase token")
-        return response.json()  # contient les infos utilisateur
+
+    if not SUPABASE_URL:
+        raise HTTPException(status_code=500, detail="SUPABASE_URL is not configured")
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+    token = authorization.split(" ", 1)[1]
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        response = requests.get(
+            SUPABASE_JWT_ENDPOINT,
+            headers=headers,
+            timeout=SUPABASE_TIMEOUT_SECONDS,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=503, detail="Authentication provider unavailable") from exc
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid Supabase token")
+    return response.json()  # contient les infos utilisateur
+
+
+def get_authenticated_user_id(user_info: dict) -> UUID:
+    raw_user_id = user_info.get("id") or user_info.get("sub")
+    if not raw_user_id:
+        raise HTTPException(status_code=401, detail="Authenticated user id missing from token")
+
+    try:
+        return UUID(str(raw_user_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Authenticated user id is invalid") from exc
 
 # Dependency
 def get_db():
@@ -190,7 +216,10 @@ def delete_distributor(distributor_id: int, db: Session = Depends(get_db), user=
 # ============================
 @app.post("/api/users/", response_model=schemas.User, tags=["Users"])
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db), user_info=Depends(verify_supabase_token)):
-    return crud.create_user(db=db, user=user)
+    user_id = None
+    if user_info:
+        user_id = get_authenticated_user_id(user_info)
+    return crud.create_user(db=db, user=user, user_id=user_id)
 
 @app.get("/api/users/", response_model=List[schemas.User], tags=["Users"])
 def get_users(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user_info=Depends(verify_supabase_token)):
@@ -214,7 +243,8 @@ def delete_user(user_id: str, db: Session = Depends(get_db), user_info=Depends(v
 # COLLECTION ENDPOINTS
 # ============================
 @app.post("/api/collections/", response_model=schemas.Collection, tags=["Collections"])
-def create_collection(collection: schemas.CollectionCreate, owner_id: str, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
+def create_collection(collection: schemas.CollectionCreate, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
+    owner_id = get_authenticated_user_id(user)
     return crud.create_collection(db=db, collection=collection, owner_id=owner_id)
 
 @app.get("/api/collections/", response_model=List[schemas.Collection], tags=["Collections"])
@@ -240,6 +270,12 @@ def delete_collection(collection_id: int, db: Session = Depends(get_db), user=De
 # ============================
 @app.post("/api/collection_shares/", response_model=schemas.CollectionShare, tags=["CollectionShares"])
 def create_collection_share(share: schemas.CollectionShareCreate, collection_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
+    requester_id = get_authenticated_user_id(user)
+    db_collection = crud.get_collection(db, collection_id=collection_id)
+    if db_collection is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    if db_collection.owner_id != requester_id:
+        raise HTTPException(status_code=403, detail="Only the collection owner can share it")
     return crud.create_collection_share(db=db, share=share, collection_id=collection_id)
 
 @app.get("/api/collection_shares/", response_model=List[schemas.CollectionShare], tags=["CollectionShares"])
@@ -264,7 +300,8 @@ def delete_collection_share(share_id: int, db: Session = Depends(get_db), user=D
 # USER LOCATION ENDPOINTS
 # ============================
 @app.post("/api/user_locations/", response_model=schemas.UserLocation, tags=["UserLocations"])
-def create_user_location(location: schemas.UserLocationCreate, user_id: str, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
+def create_user_location(location: schemas.UserLocationCreate, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
+    user_id = get_authenticated_user_id(user)
     return crud.create_user_location(db=db, location=location, user_id=user_id)
 
 @app.get("/api/user_locations/", response_model=List[schemas.UserLocation], tags=["UserLocations"])
@@ -308,3 +345,4 @@ def delete_collection_game(collection_game_id: int, db: Session = Depends(get_db
     db_collection_game = crud.delete_collection_game(db, collection_game_id=collection_game_id)
     if db_collection_game is None:
         raise HTTPException(status_code=404, detail="Collection game not found")
+    return db_collection_game

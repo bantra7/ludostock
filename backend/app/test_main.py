@@ -1,362 +1,187 @@
 import os
-import pytest # For potential fixtures later, not strictly used in this basic setup
+from pathlib import Path
+from uuid import uuid4
+
+import pytest
+from fastapi import Header
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-
-# Adjust imports to match your project structure if necessary
-from backend.app.main import app, get_db
-from backend.app.database import Base # SQLALCHEMY_DATABASE_URL is prod, not needed here
-from backend.app import models # To access models like BoardGame, Label, and game_labels table
-from backend.app import schemas # For request/response validation if needed directly in tests
-
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import sessionmaker
 
-# --- Test Database Setup ---
-TEST_SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:" # Changed to SQLite
+
+TEST_DB_MARKER = Path(__file__).with_name("test_backend.duckdb")
+TEST_DB_MARKER.touch(exist_ok=True)
+os.environ.setdefault("DATABASE_URL", f"duckdb:///{TEST_DB_MARKER.as_posix()}")
+os.environ.setdefault("SQL_CREATION_FILE", str(Path(__file__).with_name("test_schema.sql")))
+os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
+
+from backend.app.main import app, get_db, verify_supabase_token
+from backend.app.database import Base
+from backend.app import models
+
+
+TEST_SQLALCHEMY_DATABASE_URL = "sqlite://"
 engine = create_engine(
     TEST_SQLALCHEMY_DATABASE_URL,
     connect_args={"check_same_thread": False},
-    poolclass=StaticPool  # Ensure same connection for in-memory DB
+    poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Create all tables in the test database
-# This should run once before any tests. If using pytest, a session-scoped fixture is ideal.
-# For this script, it runs when the module is first imported.
-# Base.metadata.create_all(bind=engine) # Removed: tables are now created in cleanup_db before each test
 
 @pytest.fixture(scope="session", autouse=True)
 def create_tables_once():
-    """Create tables once per test session."""
-    # Ensure all models are imported so Base.metadata is populated
-    # This is usually handled by imports at the top of the file.
     Base.metadata.create_all(bind=engine)
     yield
-    # Optional: Base.metadata.drop_all(bind=engine) # if you want to clean up after the entire session
 
-# --- Dependency Override ---
-def override_get_db():
+
+@pytest.fixture(autouse=True)
+def cleanup_db():
+    db = TestingSessionLocal()
     try:
-        db = TestingSessionLocal()
+        db.query(models.CollectionGame).delete()
+        db.query(models.CollectionShare).delete()
+        db.query(models.UserLocation).delete()
+        db.query(models.Collection).delete()
+        db.query(models.User).delete()
+        db.query(models.Game).delete()
+        db.query(models.Author).delete()
+        db.query(models.Artist).delete()
+        db.query(models.Editor).delete()
+        db.query(models.Distributor).delete()
+        db.commit()
+        yield
+    finally:
+        db.close()
+
+
+def override_get_db():
+    db = TestingSessionLocal()
+    try:
         yield db
     finally:
         db.close()
 
-app.dependency_overrides[get_db] = override_get_db
 
+def override_verify_supabase_token(authorization: str | None = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        return {"id": str(uuid4())}
+    return {"id": authorization.split(" ", 1)[1]}
+
+
+app.dependency_overrides[get_db] = override_get_db
+app.dependency_overrides[verify_supabase_token] = override_verify_supabase_token
 client = TestClient(app)
 
-# --- Database Cleanup Function ---
-def cleanup_db():
-    """Cleans all data from relevant tables before each test."""
-    # Assumes tables are already created by the session-scoped fixture.
-    db = TestingSessionLocal()
-    try:
-        # Order of deletion matters due to foreign key constraints.
-        # Clear the association table first.
-        db.execute(models.game_labels.delete()) # Assuming game_labels is a Table object
-        db.query(models.BoardGame).delete()
-        db.query(models.Label).delete()
-        db.commit()
-    finally:
-        db.close()
 
-# --- Test Cases ---
+def test_create_user_generates_uuid():
+    response = client.post(
+        "/api/users/",
+        json={"email": "alice@example.com", "username": "alice"},
+    )
 
-# == Label Tests ==
-
-def test_create_label():
-    cleanup_db()
-    response = client.post("/api/labels/", json={"name": "Strategy"})
     assert response.status_code == 200
     data = response.json()
-    assert data["name"] == "Strategy"
-    assert "id" in data
-
-def test_create_label_duplicate_name():
-    cleanup_db()
-    client.post("/api/labels/", json={"name": "Strategy"}) # Create first label
-    response = client.post("/api/labels/", json={"name": "Strategy"}) # Attempt duplicate
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Label with this name already exists"
-
-def test_get_labels():
-    cleanup_db()
-    client.post("/api/labels/", json={"name": "Family"})
-    client.post("/api/labels/", json={"name": "Abstract"})
-    response = client.get("/api/labels/")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 2
-    assert data[0]["name"] == "Family"
-    assert data[1]["name"] == "Abstract"
-
-def test_get_label_by_id():
-    cleanup_db()
-    label_response = client.post("/api/labels/", json={"name": "Worker Placement"})
-    label_id = label_response.json()["id"]
-    response = client.get(f"/api/labels/{label_id}")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "Worker Placement"
-    assert data["id"] == label_id
-
-def test_get_label_not_found():
-    cleanup_db()
-    response = client.get("/api/labels/99999")
-    assert response.status_code == 404
-
-def test_update_label():
-    cleanup_db()
-    label_response = client.post("/api/labels/", json={"name": "Cooperative"})
-    label_id = label_response.json()["id"]
-    response = client.put(f"/api/labels/{label_id}", json={"name": "Co-op"})
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "Co-op"
-    # Verify by fetching again
-    get_response = client.get(f"/api/labels/{label_id}")
-    assert get_response.json()["name"] == "Co-op"
-
-def test_update_label_not_found():
-    cleanup_db()
-    response = client.put("/api/labels/99999", json={"name": "Doesnt Exist"})
-    assert response.status_code == 404
-
-def test_delete_label():
-    cleanup_db()
-    label_response = client.post("/api/labels/", json={"name": "Legacy"})
-    label_id = label_response.json()["id"]
-    response = client.delete(f"/api/labels/{label_id}")
-    assert response.status_code == 200
-    # Verify by trying to get it again
-    get_response = client.get(f"/api/labels/{label_id}")
-    assert get_response.status_code == 404
-
-def test_delete_label_not_found():
-    cleanup_db()
-    response = client.delete("/api/labels/99999")
-    assert response.status_code == 404
-
-# == BoardGame Tests ==
-
-def test_create_board_game_no_labels():
-    cleanup_db()
-    game_data = {
-        "name": "Terraforming Mars", "editor_name": "FryxGames",
-        "num_players_min": 1, "num_players_max": 5, "age_min": 12,
-        "time_duration_mean": 120
-    }
-    response = client.post("/api/boardgames/", json=game_data)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "Terraforming Mars"
-    assert data["editor_name"] == "FryxGames"
-    assert len(data["labels"]) == 0
-
-def test_create_board_game_with_new_labels():
-    cleanup_db()
-    game_data = {
-        "name": "Wingspan", "editor_name": "Stonemaier Games",
-        "num_players_min": 1, "num_players_max": 5, "age_min": 10,
-        "time_duration_mean": 60, "labels": ["Engine Building", "Animals"]
-    }
-    response = client.post("/api/boardgames/", json=game_data)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "Wingspan"
-    assert len(data["labels"]) == 2
-    label_names = sorted([l["name"] for l in data["labels"]])
-    assert label_names == ["Animals", "Engine Building"]
-    # Check if labels were actually created in DB
-    labels_response = client.get("/api/labels/")
-    assert len(labels_response.json()) == 2
+    assert data["email"] == "alice@example.com"
+    assert data["username"] == "alice"
+    assert data["id"]
 
 
-def test_create_board_game_with_existing_labels():
-    cleanup_db()
-    # Create labels first
-    label1_resp = client.post("/api/labels/", json={"name": "Card Game"})
-    label2_resp = client.post("/api/labels/", json={"name": "Set Collection"})
-    assert label1_resp.status_code == 200
-    assert label2_resp.status_code == 200
+def test_create_author_duplicate_returns_conflict():
+    first = client.post("/api/authors/", json={"name": "Reiner Knizia"})
+    second = client.post("/api/authors/", json={"name": "Reiner Knizia"})
 
-    game_data = {
-        "name": "7 Wonders", "editor_name": "Repos Production",
-        "num_players_min": 2, "num_players_max": 7, "age_min": 10,
-        "time_duration_mean": 30, "labels": ["Card Game", "Set Collection"]
-    }
-    response = client.post("/api/boardgames/", json=game_data)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "7 Wonders"
-    assert len(data["labels"]) == 2
-    label_ids_in_game = sorted([l["id"] for l in data["labels"]])
-    expected_label_ids = sorted([label1_resp.json()["id"], label2_resp.json()["id"]])
-    assert label_ids_in_game == expected_label_ids
-
-def test_get_board_games():
-    cleanup_db()
-    client.post("/api/boardgames/", json={
-        "name": "Gloomhaven", "editor_name": "Cephalofair", "num_players_min": 1,
-        "num_players_max": 4, "age_min": 14, "time_duration_mean": 90, "labels": ["Campaign"]
-    })
-    client.post("/api/boardgames/", json={
-        "name": "Azul", "editor_name": "Next Move", "num_players_min": 2,
-        "num_players_max": 4, "age_min": 8, "time_duration_mean": 40, "labels": ["Abstract"]
-    })
-    response = client.get("/api/boardgames/")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 2
-    assert data[0]["name"] == "Gloomhaven"
-    assert data[1]["name"] == "Azul"
-
-def test_get_board_game_by_id():
-    cleanup_db()
-    game_resp = client.post("/api/boardgames/", json={
-        "name": "Pandemic", "editor_name": "Z-Man Games", "num_players_min": 2,
-        "num_players_max": 4, "age_min": 8, "time_duration_mean": 45, "labels": ["Cooperative"]
-    })
-    game_id = game_resp.json()["id"]
-    response = client.get(f"/api/boardgames/{game_id}")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "Pandemic"
-    assert len(data["labels"]) == 1
-    assert data["labels"][0]["name"] == "Cooperative"
-
-def test_get_board_game_not_found():
-    cleanup_db()
-    response = client.get("/api/boardgames/99999")
-    assert response.status_code == 404
-
-def test_update_board_game_scalar_fields():
-    cleanup_db()
-    game_resp = client.post("/api/boardgames/", json={
-        "name": "Scythe", "editor_name": "Stonemaier", "num_players_min": 1,
-        "num_players_max": 5, "age_min": 14, "time_duration_mean": 115
-    })
-    game_id = game_resp.json()["id"]
-    update_payload = {"name": "Scythe: Epic Edition", "editor_name": "Stonemaier Games"}
-    response = client.put(f"/api/boardgames/{game_id}", json=update_payload)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "Scythe: Epic Edition"
-    assert data["editor_name"] == "Stonemaier Games"
-    # Verify original fields not in payload are unchanged
-    assert data["num_players_min"] == 1
-
-def test_update_board_game_add_labels():
-    cleanup_db()
-    game_resp = client.post("/api/boardgames/", json={
-        "name": "Carcassonne", "editor_name": "Hans im Glück", "num_players_min": 2,
-        "num_players_max": 5, "age_min": 7, "time_duration_mean": 35, "labels": []
-    })
-    game_id = game_resp.json()["id"]
-    assert len(game_resp.json()["labels"]) == 0
-    update_payload = {"labels": ["Tile Placement", "Medieval"]}
-    response = client.put(f"/api/boardgames/{game_id}", json=update_payload)
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["labels"]) == 2
-    label_names = sorted([l["name"] for l in data["labels"]])
-    assert label_names == ["Medieval", "Tile Placement"]
-
-def test_update_board_game_change_labels():
-    cleanup_db()
-    client.post("/api/labels/", json={"name": "Area Control"}) # Ensure "Area Control" exists
-    game_resp = client.post("/api/boardgames/", json={
-        "name": "Root", "editor_name": "Leder Games", "num_players_min": 2,
-        "num_players_max": 4, "age_min": 10, "time_duration_mean": 75, "labels": ["Wargame"]
-    })
-    game_id = game_resp.json()["id"]
-    assert game_resp.json()["labels"][0]["name"] == "Wargame"
-    update_payload = {"labels": ["Area Control", "Asymmetric"]} # "Asymmetric" is new
-    response = client.put(f"/api/boardgames/{game_id}", json=update_payload)
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["labels"]) == 2
-    label_names = sorted([l["name"] for l in data["labels"]])
-    assert label_names == ["Area Control", "Asymmetric"]
-
-def test_update_board_game_remove_labels():
-    cleanup_db()
-    game_resp = client.post("/api/boardgames/", json={
-        "name": "Ticket to Ride", "editor_name": "Days of Wonder", "num_players_min": 2,
-        "num_players_max": 5, "age_min": 8, "time_duration_mean": 60, "labels": ["Family", "Trains"]
-    })
-    game_id = game_resp.json()["id"]
-    assert len(game_resp.json()["labels"]) == 2
-    update_payload = {"labels": []} # Remove all labels
-    response = client.put(f"/api/boardgames/{game_id}", json=update_payload)
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["labels"]) == 0
-
-def test_update_board_game_no_label_change_in_payload():
-    cleanup_db()
-    game_resp = client.post("/api/boardgames/", json={
-        "name": "Everdell", "editor_name": "Starling Games", "num_players_min": 1,
-        "num_players_max": 4, "age_min": 10, "time_duration_mean": 60, "labels": ["City Building"]
-    })
-    game_id = game_resp.json()["id"]
-    original_labels = game_resp.json()["labels"]
-
-    update_payload = {"name": "Everdell: Collector's Edition"} # No 'labels' key in payload
-    response = client.put(f"/api/boardgames/{game_id}", json=update_payload)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "Everdell: Collector's Edition"
-    assert len(data["labels"]) == 1 # Labels should be unchanged
-    assert data["labels"][0]["name"] == original_labels[0]["name"]
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert second.json()["detail"] == "Author with this name already exists"
 
 
-def test_update_board_game_not_found():
-    cleanup_db()
-    response = client.put("/api/boardgames/99999", json={"name": "Non Existent"})
-    assert response.status_code == 404
+def test_create_game_is_atomic_on_duplicate_related_entities():
+    client.post("/api/authors/", json={"name": "Existing Author"})
 
-def test_delete_board_game():
-    cleanup_db()
-    game_resp = client.post("/api/boardgames/", json={
-        "name": "Patchwork", "editor_name": "Lookout Games", "num_players_min": 2,
-        "num_players_max": 2, "age_min": 8, "time_duration_mean": 30
-    })
-    game_id = game_resp.json()["id"]
-    response = client.delete(f"/api/boardgames/{game_id}")
-    assert response.status_code == 200
-    # Verify by trying to get it again
-    get_response = client.get(f"/api/boardgames/{game_id}")
-    assert get_response.status_code == 404
+    response = client.post(
+        "/api/games/",
+        json={
+            "name": "Broken Game",
+            "type": "base",
+            "authors": ["New Author", "Existing Author", "New Author"],
+        },
+    )
 
-def test_delete_board_game_not_found():
-    cleanup_db()
-    response = client.delete("/api/boardgames/99999")
-    assert response.status_code == 404
+    assert response.status_code == 409
 
-# Consider adding a fixture to clean up the test_boardgames.db file after all tests run
-# For example, using pytest:
-# @pytest.fixture(scope="session", autouse=True)
-# def cleanup_test_db_file():
-#     yield # Let all tests run
-#     # Teardown: remove the test DB file
-#     if os.path.exists(TEST_SQLALCHEMY_DATABASE_URL.replace("duckdb:///", "")):
-#         os.remove(TEST_SQLALCHEMY_DATABASE_URL.replace("duckdb:///", ""))
+    authors = client.get("/api/authors/")
+    author_names = sorted(author["name"] for author in authors.json())
+    assert author_names == ["Existing Author"]
 
-# For now, manual cleanup might be needed if the file is disk-based.
-# If TEST_SQLALCHEMY_DATABASE_URL was "duckdb:///:memory:", no file cleanup is needed.
-# However, :memory: db might be cleared between TestClient calls or need careful session management.
-# Using a file-based one like "./test_boardgames.db" is often more straightforward for TestClient
-# as long as tables are created once and data is cleaned per test.
 
-# NOTE: The above comment about :memory: db and TestClient session management is relevant.
-# For an in-memory database, all tables are lost when the connection is closed.
-# FastAPI's TestClient typically creates a new app instance and thus new DB engine/sessions per test
-# if not managed carefully with fixtures. However, the current setup with module-level `engine`
-# and `TestingSessionLocal` along with `app.dependency_overrides` should maintain the in-memory DB
-# across calls within a single test function, but perhaps not across different test functions
-# if the test runner re-imports or re-initializes things in a complex way.
-# The `cleanup_db()` function will still be important.
-# The main change here is avoiding disk file I/O and potential state leakage between test runs.
+def test_delete_collection_game_returns_deleted_object():
+    user_response = client.post(
+        "/api/users/",
+        json={"email": "owner@example.com", "username": "owner"},
+    )
+    assert user_response.status_code == 200
+    owner_id = user_response.json()["id"]
+
+    collection_response = client.post(
+        "/api/collections/",
+        headers={"Authorization": f"Bearer {owner_id}"},
+        json={"name": "Main", "description": "Primary collection"},
+    )
+    assert collection_response.status_code == 200
+
+    game_response = client.post(
+        "/api/games/",
+        json={"name": "Azul", "type": "base"},
+    )
+    assert game_response.status_code == 200
+
+    collection_game_response = client.post(
+        "/api/collection_games/",
+        json={
+            "collection_id": collection_response.json()["id"],
+            "game_id": game_response.json()["id"],
+            "quantity": 2,
+        },
+    )
+    assert collection_game_response.status_code == 200
+
+    delete_response = client.delete(
+        f"/api/collection_games/{collection_game_response.json()['id']}"
+    )
+
+    assert delete_response.status_code == 200
+    deleted = delete_response.json()
+    assert deleted["id"] == collection_game_response.json()["id"]
+    assert deleted["quantity"] == 2
+
+
+def test_collection_share_requires_owner():
+    owner_response = client.post(
+        "/api/users/",
+        json={"email": "owner2@example.com", "username": "owner2"},
+    )
+    other_response = client.post(
+        "/api/users/",
+        json={"email": "other@example.com", "username": "other"},
+    )
+    target_response = client.post(
+        "/api/users/",
+        json={"email": "target@example.com", "username": "target"},
+    )
+
+    collection_response = client.post(
+        "/api/collections/",
+        headers={"Authorization": f"Bearer {owner_response.json()['id']}"},
+        json={"name": "Shared", "description": None},
+    )
+
+    forbidden_response = client.post(
+        f"/api/collection_shares/?collection_id={collection_response.json()['id']}",
+        headers={"Authorization": f"Bearer {other_response.json()['id']}"},
+        json={"shared_with": target_response.json()["id"], "permission": "read"},
+    )
+
+    assert forbidden_response.status_code == 403
+    assert forbidden_response.json()["detail"] == "Only the collection owner can share it"

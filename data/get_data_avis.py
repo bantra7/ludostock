@@ -11,7 +11,7 @@ NB_PAGES = 5778
 TRICTRAC_URL = "https://trictrac.net/avis/"
 BROKEN_URLS = []
 BROKEN_URLS_FILE = "broken_urls.txt"
-FILENAME = "trictac_data_avis.csv"
+FILENAME = "trictrac_data_avis.csv"
 MAX_WORKERS = 20
 
 LOGER_LEVEL = "DEBUG"

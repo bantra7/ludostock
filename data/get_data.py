@@ -13,7 +13,7 @@ NB_PAGES = 1060
 TRICTRAC_URL = "https://trictrac.net/jeux/"
 BROKEN_URLS = []
 BROKEN_URLS_FILE = "broken_urls.txt"
-FILENAME = "trictac_data_games.csv"
+FILENAME = "trictrac_data_games.csv"
 
 # Configuration du logger
 LOGER_LEVEL = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
