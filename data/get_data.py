@@ -1,169 +1,221 @@
-import time
 import sys
-from loguru import logger
-from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Any
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import pandas as pd
-from bs4 import BeautifulSoup
 import requests
-from urllib.parse import urlparse, parse_qs, unquote
+from bs4 import BeautifulSoup
+from loguru import logger
 
 NB_PAGES = 1060
-TRICTRAC_URL = "https://trictrac.net/jeux/"
-BROKEN_URLS = []
+TRICTRAC_URL = "https://trictrac.net/jeux"
+BROKEN_URLS: List[str] = []
 BROKEN_URLS_FILE = "broken_urls.txt"
 FILENAME = "trictrac_data_games.csv"
+REQUEST_TIMEOUT = 15
+DEFAULT_MAX_WORKERS = 10
 
 # Configuration du logger
-LOGER_LEVEL = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
+LOGGER_LEVEL = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
 logger.remove()
-logger.add(sys.stdout, level=LOGER_LEVEL)
+logger.add(sys.stdout, level=LOGGER_LEVEL)
 
 
-def scrape_urls_en_parallele(urls: List[str], max_workers: int = 10) -> List[Dict[str, Any]]:
+def fetch_page(url: str) -> Optional[requests.Response]:
+    """Execute une requete HTTP et loggue proprement les erreurs."""
+    try:
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        return response
+    except requests.RequestException as exc:
+        logger.error(f"Erreur HTTP pour {url}: {exc}")
+        return None
+
+
+def scrape_urls_en_parallele(
+    urls: List[str], max_workers: int = DEFAULT_MAX_WORKERS
+) -> List[Dict[str, Any]]:
     """
-    Récupère les informations des jeux en parallèle à partir d'une liste d'URLs.
+    Recupere les informations des jeux en parallele a partir d'une liste d'URLs.
 
     Args:
-        urls (List[str]): Liste des URLs à scraper.
-        max_workers (int, optional): Nombre maximum de threads. Par défaut à 10.
+        urls: Liste des URLs a scraper.
+        max_workers: Nombre maximum de threads.
 
     Returns:
-        List[Dict[str, Any]]: Liste des dictionnaires contenant les infos des jeux.
+        La liste des dictionnaires contenant les infos des jeux.
     """
-    global BROKEN_URLS
-    jeux = []
+    jeux: List[Dict[str, Any]] = []
+    if not urls:
+        return jeux
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        try:
-            for result in executor.map(extraire_infos_trictrac, urls):
-                jeux.append(result)
-        except Exception:
-            logger.error(f"Erreur dans les urls suivantes : {urls}")
-            BROKEN_URLS += urls
+        futures = {executor.submit(extraire_infos_trictrac, url): url for url in urls}
+        for future in as_completed(futures):
+            url = futures[future]
+            try:
+                result = future.result()
+            except Exception as exc:
+                logger.error(f"Erreur inattendue pendant le scraping de {url}: {exc}")
+                BROKEN_URLS.append(url)
+                continue
+
+            if result is None:
+                BROKEN_URLS.append(url)
+                continue
+
+            jeux.append(result)
 
     return jeux
 
 
-def charger_tous_les_jeux(i: int) -> List[str]:
+def charger_tous_les_jeux(page_number: int) -> List[str]:
     """
-    Charge toutes les URLs de jeux sur une page donnée.
+    Charge toutes les URLs de jeux sur une page donnee.
 
     Args:
-        i (int): Numéro de la page à charger.
+        page_number: Numero de la page a charger.
 
     Returns:
-        List[str]: Liste des URLs des jeux trouvés sur la page.
+        Liste des URLs des jeux trouves sur la page.
     """
-    logger.info(f"📦 Chargement de la page {i}...")
-    url = f"{TRICTRAC_URL}/{i}"
-    response = requests.get(url)
-    if response.status_code != 200:
-        logger.error(f"❌ Erreur de chargement : {url}")
+    logger.info(f"Chargement de la page {page_number}...")
+    url = f"{TRICTRAC_URL}/{page_number}"
+    response = fetch_page(url)
+    if response is None:
         return []
 
     soup = BeautifulSoup(response.text, "html.parser")
-    cartes = soup.select(".style_compactCard__SrGIj")
+    cartes = soup.select('[class*="compactCard"]')
 
-    urls = []
+    urls: List[str] = []
     for carte in cartes:
-        urls.append(carte['href'])
+        href = carte.get("href")
+        if href:
+            urls.append(urljoin(TRICTRAC_URL, href))
 
-    logger.info(f"🔎 {len(urls)} jeux trouvés sur la page {i}.")
+    logger.info(f"{len(urls)} jeux trouves sur la page {page_number}.")
     return urls
 
 
-def extraire_infos_trictrac(url: str) -> Dict[str, Any]:
+def extraire_texte(element: Optional[BeautifulSoup]) -> Optional[str]:
+    """Retourne le texte nettoye d'un element HTML, ou None."""
+    if element is None:
+        return None
+    texte = element.get_text(strip=True)
+    return texte or None
+
+
+def extraire_infos_trictrac(url: str) -> Optional[Dict[str, Any]]:
     """
-    Extrait les informations d'un jeu à partir de son URL TricTrac.
+    Extrait les informations d'un jeu a partir de son URL TricTrac.
 
     Args:
-        url (str): URL du jeu à scraper.
+        url: URL du jeu a scraper.
 
     Returns:
-        Dict[str, Any]: Dictionnaire contenant les informations du jeu.
+        Dictionnaire contenant les informations du jeu, ou None si la page est inutilisable.
     """
-    reponse = requests.get(url)
-    soup = BeautifulSoup(reponse.text, "html.parser")
-    infos = {
-        'Url': url,
-        'Nom': soup.select_one("h1.style_specsTitle__NMRfc").text
+    response = fetch_page(url)
+    if response is None:
+        return None
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    nom = extraire_texte(soup.select_one("h1.style_specsTitle__NMRfc"))
+    if not nom:
+        logger.error(f"Titre introuvable pour {url}")
+        return None
+
+    infos: Dict[str, Any] = {
+        "Url": url,
+        "Nom": nom,
     }
 
     bloc = soup.select_one("h4.style_specsSubTitle__rfo9t")
     if bloc:
         ps = bloc.find_all("p")
         if len(ps) >= 1:
-            infos["Type"] = ps[0].text.strip()
-        if len(ps) >= 2 and ps[1].get("title") == "Année de sortie":
-            infos["Année de sortie"] = ps[1].text.strip()
-    table = soup.select_one("table.style_specsItems__HUu7f")
-    for row in table.select("tr"):
-        try:
-            label = row.select_one("th").text.strip().replace(" :", "")
-            value = row.select_one("td").text.strip()
-            logger.debug(f"🔍 {label}: {value}")
-            infos[label] = value
-        except Exception:
-            pass
+            type_jeu = extraire_texte(ps[0])
+            if type_jeu:
+                infos["Type"] = type_jeu
+        if len(ps) >= 2 and ps[1].get("title") == "Annee de sortie":
+            annee = extraire_texte(ps[1])
+            if annee:
+                infos["Annee de sortie"] = annee
 
-    try:
-        contributeurs = soup.select("span.style_conceptorsSpecs___QBek[title]")
-        logger.debug(f"👥 Contributeurs trouvés : {len(contributeurs)}")
-        for bloc in contributeurs:
-            titre = bloc.get("title").strip()
-            noms = [a.text.strip() for a in bloc.select("a")]
-            if noms:
-                logger.debug(f"👥 {titre}: {', '.join(noms)}")
-                infos[titre] = " / ".join(noms)
-    except Exception:
-        logger.error(f"Erreur lors de l'extraction des contributeurs pour {url}")
-        pass
+    table = soup.select_one("table.style_specsItems__HUu7f")
+    if table:
+        for row in table.select("tr"):
+            label = extraire_texte(row.select_one("th"))
+            value = extraire_texte(row.select_one("td"))
+            if not label or not value:
+                continue
+
+            clean_label = label.replace(" :", "")
+            logger.debug(f"{clean_label}: {value}")
+            infos[clean_label] = value
+    else:
+        logger.warning(f"Table des caracteristiques introuvable pour {url}")
+
+    contributeurs = soup.select("span.style_conceptorsSpecs___QBek[title]")
+    logger.debug(f"Contributeurs trouves : {len(contributeurs)}")
+    for bloc_contributeur in contributeurs:
+        titre = bloc_contributeur.get("title", "").strip()
+        noms = [a.get_text(strip=True) for a in bloc_contributeur.select("a") if a.get_text(strip=True)]
+        if titre and noms:
+            infos[titre] = " / ".join(noms)
+
     img = soup.select_one("img[itemprop='image']")
-    src = img.get("src") or ""
+    src = img.get("src", "") if img else ""
     parsed_url = urlparse(src)
     params = parse_qs(parsed_url.query)
-    img_url = unquote(params.get("url", [""])[0])
-    infos['Url Image'] = img_url
+    img_url = unquote(params.get("url", [""])[0]) or src
+    infos["Url Image"] = img_url
+
     return infos
 
 
 def scrape_tous_les_jeux(j_start: int) -> pd.DataFrame:
     """
-    Scrape tous les jeux à partir d'une page de départ jusqu'à la dernière page.
+    Scrape tous les jeux a partir d'une page de depart jusqu'a la derniere page.
 
     Args:
-        j_start (int): Numéro de la page de départ.
+        j_start: Numero de la page de depart.
 
     Returns:
-        pd.DataFrame: DataFrame contenant toutes les informations des jeux.
+        DataFrame contenant toutes les informations des jeux.
     """
     start = time.time()
-    jeux = []
-    try:
-        for j in range(j_start, NB_PAGES+1):
-            urls = charger_tous_les_jeux(j)
+    jeux: List[Dict[str, Any]] = []
 
-            jeux += [{**d, 'J': j} for d in scrape_urls_en_parallele(urls)]
-            elapsed = time.time() - start
-            avg_per_iter = elapsed / j
-            remaining = avg_per_iter * (1060 - j)
-            logger.info(f"🔁 {j}/1060 Already {len(jeux)} games - Temps écoulé : {elapsed:.1f}s - Temps restant estimé : {remaining:.1f}s")
-    except Exception as e:
-        logger.error(e)
-    finally:
-        return pd.DataFrame(jeux)
+    for iteration_index, page_number in enumerate(range(j_start, NB_PAGES + 1), start=1):
+        urls = charger_tous_les_jeux(page_number)
+        jeux.extend({**jeu, "J": page_number} for jeu in scrape_urls_en_parallele(urls))
+
+        elapsed = time.time() - start
+        avg_per_iter = elapsed / iteration_index
+        remaining = avg_per_iter * (NB_PAGES - page_number)
+        logger.info(
+            f"{page_number}/{NB_PAGES} - {len(jeux)} jeux recuperes - "
+            f"temps ecoule : {elapsed:.1f}s - temps restant estime : {remaining:.1f}s"
+        )
+
+    return pd.DataFrame(jeux)
 
 
 if __name__ == "__main__":
     """
-    Point d'entrée principal du script.
-    Scrape tous les jeux et sauvegarde les résultats dans un fichier CSV.
-    Sauvegarde également les URLs cassées dans un fichier texte.
+    Point d'entree principal du script.
+    Scrape tous les jeux et sauvegarde les resultats dans un fichier CSV.
+    Sauvegarde egalement les URLs cassees dans un fichier texte.
     """
     df = scrape_tous_les_jeux(j_start=1)
     df.to_csv(FILENAME, index=False)
-    logger.info(f"✅ Données enregistrées dans {FILENAME}")
-    with open(BROKEN_URLS_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(BROKEN_URLS))
-    logger.info("✅ Urls cassées enregistrées dans {BROKEN_URLS_FILE}")
+    logger.info(f"Donnees enregistrees dans {FILENAME}")
+
+    with open(BROKEN_URLS_FILE, "w", encoding="utf-8") as file_handle:
+        file_handle.write("\n".join(BROKEN_URLS))
+
+    logger.info(f"URLs cassees enregistrees dans {BROKEN_URLS_FILE}")

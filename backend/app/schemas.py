@@ -1,11 +1,20 @@
-from pydantic import BaseModel, Field
+"""Pydantic schemas exposed by the FastAPI API."""
+
 from typing import List, Optional
 from uuid import UUID
 
-# ============================
-# GAME SCHEMAS
-# ============================
-class GameBase(BaseModel):
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class OrmSchema(BaseModel):
+    """Base schema compatible with dicts and attribute-based objects."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GameBase(OrmSchema):
+    """Shared game fields."""
+
     name: str
     type: str
     extension_of_id: Optional[int] = None
@@ -17,155 +26,187 @@ class GameBase(BaseModel):
     url: Optional[str] = None
     image_url: Optional[str] = None
 
+
 class GameCreate(GameBase):
+    """Payload used to create a game."""
+
     authors: List[str] = Field(default_factory=list)
     artists: List[str] = Field(default_factory=list)
     editors: List[str] = Field(default_factory=list)
     distributors: List[str] = Field(default_factory=list)
 
-class Game(GameBase):
-    id: int
-    authors: List["Author"] = Field(default_factory=list)
-    artists: List["Artist"] = Field(default_factory=list)
-    editors: List["Editor"] = Field(default_factory=list)
-    distributors: List["Distributor"] = Field(default_factory=list)
 
-    class Config:
-        from_attributes = True
+class AuthorBase(OrmSchema):
+    """Shared author fields."""
 
-# ============================
-# LINKED TABLES SCHEMAS
-# ============================
-class AuthorBase(BaseModel):
     name: str
+
 
 class AuthorCreate(AuthorBase):
-    pass
+    """Payload used to create an author."""
+
 
 class Author(AuthorBase):
-    id: int
-    class Config:
-        from_attributes = True
+    """Author response schema."""
 
-class ArtistBase(BaseModel):
+    id: int
+
+
+class ArtistBase(OrmSchema):
+    """Shared artist fields."""
+
     name: str
+
 
 class ArtistCreate(ArtistBase):
-    pass
+    """Payload used to create an artist."""
+
 
 class Artist(ArtistBase):
-    id: int
-    class Config:
-        from_attributes = True
+    """Artist response schema."""
 
-class EditorBase(BaseModel):
+    id: int
+
+
+class EditorBase(OrmSchema):
+    """Shared editor fields."""
+
     name: str
+
 
 class EditorCreate(EditorBase):
-    pass
+    """Payload used to create an editor."""
+
 
 class Editor(EditorBase):
-    id: int
-    class Config:
-        from_attributes = True
+    """Editor response schema."""
 
-class DistributorBase(BaseModel):
+    id: int
+
+
+class DistributorBase(OrmSchema):
+    """Shared distributor fields."""
+
     name: str
 
+
 class DistributorCreate(DistributorBase):
-    pass
+    """Payload used to create a distributor."""
+
 
 class Distributor(DistributorBase):
-    id: int
-    class Config:
-        from_attributes = True
+    """Distributor response schema."""
 
-# ============================
-# USER SCHEMAS
-# ============================
-class UserBase(BaseModel):
+    id: int
+
+
+class Game(GameBase):
+    """Game response schema."""
+
+    id: int
+    authors: List[Author] = Field(default_factory=list)
+    artists: List[Artist] = Field(default_factory=list)
+    editors: List[Editor] = Field(default_factory=list)
+    distributors: List[Distributor] = Field(default_factory=list)
+
+
+class UserBase(OrmSchema):
+    """Shared user fields."""
+
     email: str
     username: Optional[str] = None
 
+
 class UserCreate(UserBase):
-    pass
+    """Payload used to create a user."""
+
 
 class User(UserBase):
-    id: UUID
-    class Config:
-        from_attributes = True
+    """User response schema."""
 
-# ============================
-# COLLECTION SCHEMAS
-# ============================
-class CollectionBase(BaseModel):
+    id: UUID
+
+
+class CollectionGameBase(OrmSchema):
+    """Shared collection game fields."""
+
+    quantity: Optional[int] = 1
+
+
+class CollectionGameCreate(CollectionGameBase):
+    """Payload used to create a collection game."""
+
+    collection_id: int
+    game_id: int
+    location_id: Optional[int] = None
+
+
+class CollectionGame(CollectionGameBase):
+    """Collection game response schema."""
+
+    id: int
+    collection_id: int
+    game_id: int
+    location_id: Optional[int] = None
+
+
+class CollectionShareBase(OrmSchema):
+    """Shared collection share fields."""
+
+    permission: str
+
+
+class CollectionShareCreate(CollectionShareBase):
+    """Payload used to create a collection share."""
+
+    shared_with: UUID
+
+
+class CollectionShare(CollectionShareBase):
+    """Collection share response schema."""
+
+    id: int
+    collection_id: int
+    shared_with: UUID
+
+
+class CollectionBase(OrmSchema):
+    """Shared collection fields."""
+
     name: str
     description: Optional[str] = None
 
+
 class CollectionCreate(CollectionBase):
-    pass
+    """Payload used to create a collection."""
+
+    owner_id: UUID
+
 
 class Collection(CollectionBase):
+    """Collection response schema."""
+
     id: int
     owner_id: UUID
     owner: Optional[User] = None
-    games: List["CollectionGame"] = Field(default_factory=list)
-    shares: List["CollectionShare"] = Field(default_factory=list)
+    games: List[CollectionGame] = Field(default_factory=list)
+    shares: List[CollectionShare] = Field(default_factory=list)
 
-    class Config:
-        from_attributes = True
 
-# ============================
-# COLLECTION SHARE SCHEMAS
-# ============================
-class CollectionShareBase(BaseModel):
-    permission: str
+class UserLocationBase(OrmSchema):
+    """Shared user location fields."""
 
-class CollectionShareCreate(CollectionShareBase):
-    shared_with: UUID
-
-class CollectionShare(CollectionShareBase):
-    id: int
-    collection_id: int
-    shared_with: UUID
-
-    class Config:
-        from_attributes = True
-
-# ============================
-# USER LOCATION SCHEMAS
-# ============================
-class UserLocationBase(BaseModel):
     name: str
 
-class UserLocationCreate(UserLocationBase):
-    pass
 
-class UserLocation(UserLocationBase):
-    id: int
+class UserLocationCreate(UserLocationBase):
+    """Payload used to create a user location."""
+
     user_id: UUID
 
-    class Config:
-        from_attributes = True
 
-# ============================
-# COLLECTION GAME SCHEMAS
-# ============================
-class CollectionGameBase(BaseModel):
-    quantity: Optional[int] = 1
+class UserLocation(UserLocationBase):
+    """User location response schema."""
 
-class CollectionGameCreate(CollectionGameBase):
-    collection_id: int
-    game_id: int
-    location_id: Optional[int] = None
-
-class CollectionGame(CollectionGameBase):
     id: int
-    collection_id: int
-    game_id: int
-    location_id: Optional[int] = None
-
-    class Config:
-        from_attributes = True
-
-# Pour les relations imbriquées, il faut ajouter ceci à la fin du fichier :
+    user_id: UUID

@@ -1,295 +1,567 @@
+"""CRUD helpers backed by SQLite."""
+
+import sqlite3
+from collections import defaultdict
+from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-from . import models, schemas
+
+from . import schemas
+from .database import get_connection
 
 
-def _commit_or_409(db: Session, detail: str):
+GAME_RELATIONS = {
+    "authors": ("authors", "game_authors", "author_id"),
+    "artists": ("artists", "game_artists", "artist_id"),
+    "editors": ("editors", "game_editors", "editor_id"),
+    "distributors": ("distributors", "game_distributors", "distributor_id"),
+}
+
+
+def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    """Convert a SQLite row to a plain dict."""
+    return dict(row) if row is not None else None
+
+
+def _rows_to_dicts(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    """Convert SQLite rows to plain dicts."""
+    return [dict(row) for row in rows]
+
+
+def _raise_write_error(exc: sqlite3.IntegrityError, conflict_detail: str) -> None:
+    """Map SQLite integrity errors to HTTP errors."""
+    message = str(exc).lower()
+    if "unique" in message:
+        raise HTTPException(status_code=409, detail=conflict_detail) from exc
+    if "foreign key" in message:
+        raise HTTPException(status_code=400, detail="Referenced resource does not exist") from exc
+    raise HTTPException(status_code=400, detail="Database write failed") from exc
+
+
+def _fetch_paginated_rows(table: str, skip: int = 0, limit: int = 100) -> list[dict[str, Any]]:
+    """Fetch rows from a table using limit and offset."""
+    if limit <= 0:
+        return []
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT * FROM {table} ORDER BY id LIMIT ? OFFSET ?",
+            (limit, skip),
+        ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def _fetch_row(table: str, row_id: Any) -> dict[str, Any] | None:
+    """Fetch a single row by its primary key."""
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT * FROM {table} WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def _delete_row(table: str, row_id: Any) -> dict[str, Any] | None:
+    """Delete a row by id and return the deleted payload when present."""
+    row = _fetch_row(table, row_id)
+    if row is None:
+        return None
+    with get_connection() as connection:
+        connection.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))
+        connection.commit()
+    return row
+
+
+def _fetch_rows_by_ids(table: str, ids: list[Any]) -> list[dict[str, Any]]:
+    """Fetch rows by a list of ids."""
+    if not ids:
+        return []
+    placeholders = ", ".join("?" for _ in ids)
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"SELECT * FROM {table} WHERE id IN ({placeholders})",
+            tuple(ids),
+        ).fetchall()
+    return _rows_to_dicts(rows)
+
+
+def _ensure_unique_names(names: list[str], entity_label: str) -> list[str]:
+    """Validate and normalize related entity names."""
+    cleaned_names = [name.strip() for name in names if name and name.strip()]
+    if len(cleaned_names) != len(set(cleaned_names)):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Duplicate {entity_label} names are not allowed",
+        )
+    return cleaned_names
+
+
+def _get_or_create_named_entity(connection: sqlite3.Connection, table: str, name: str) -> dict[str, Any]:
+    """Fetch a named row or create it when missing."""
+    row = connection.execute(
+        f"SELECT * FROM {table} WHERE name = ?",
+        (name,),
+    ).fetchone()
+    if row is not None:
+        return dict(row)
+
     try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=detail) from exc
+        cursor = connection.execute(
+            f"INSERT INTO {table} (name) VALUES (?)",
+            (name,),
+        )
+    except sqlite3.IntegrityError as exc:
+        _raise_write_error(exc, f"{table[:-1].capitalize()} with this name already exists")
+    return {"id": cursor.lastrowid, "name": name}
 
 
-def _get_or_create_named_entity(db: Session, model, name: str):
-    entity = db.query(model).filter(model.name == name).first()
-    if entity:
-        return entity
+def _group_rows(rows: list[dict[str, Any]], key: str) -> dict[Any, list[dict[str, Any]]]:
+    """Group rows by a foreign-key column."""
+    grouped: dict[Any, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[row[key]].append(row)
+    return grouped
 
-    entity = model(name=name)
-    db.add(entity)
-    db.flush()
-    return entity
 
-# ============================
-# GAME CRUD
-# ============================
-def get_games(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.Game).offset(skip).limit(limit).all()
+def _load_game_relations(game_ids: list[int]) -> dict[str, dict[int, list[dict[str, Any]]]]:
+    """Load authors, artists, editors and distributors for a set of games."""
+    relations: dict[str, dict[int, list[dict[str, Any]]]] = {}
+    if not game_ids:
+        return relations
 
-def get_game(db: Session, game_id: int):
-    return db.query(models.Game).filter(models.Game.id == game_id).first()
+    placeholders = ", ".join("?" for _ in game_ids)
+    with get_connection() as connection:
+        for relation_name, (table, join_table, relation_id_column) in GAME_RELATIONS.items():
+            join_rows = _rows_to_dicts(
+                connection.execute(
+                    f"SELECT game_id, {relation_id_column} FROM {join_table} "
+                    f"WHERE game_id IN ({placeholders})",
+                    tuple(game_ids),
+                ).fetchall()
+            )
+            related_ids = sorted({row[relation_id_column] for row in join_rows})
+            related_rows = _fetch_rows_by_ids(table, related_ids)
+            related_by_id = {row["id"]: row for row in related_rows}
 
-def create_game(db: Session, game: schemas.GameCreate):
+            grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
+            for join_row in join_rows:
+                related_row = related_by_id.get(join_row[relation_id_column])
+                if related_row is not None:
+                    grouped[join_row["game_id"]].append(related_row)
+            relations[relation_name] = grouped
+
+    return relations
+
+
+def _serialize_game(game_row: dict[str, Any], relations: dict[str, dict[int, list[dict[str, Any]]]]) -> dict[str, Any]:
+    """Convert a raw game row into the API response shape."""
+    payload = dict(game_row)
+    for relation_name in GAME_RELATIONS:
+        payload[relation_name] = relations.get(relation_name, {}).get(game_row["id"], [])
+    return payload
+
+
+def _get_game_by_filters(**filters: Any) -> dict[str, Any] | None:
+    """Fetch a single game using arbitrary equality filters."""
+    where_clause = " AND ".join(f"{column} = ?" for column in filters)
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT * FROM games WHERE {where_clause} LIMIT 1",
+            tuple(filters.values()),
+        ).fetchone()
+    if row is None:
+        return None
+    relations = _load_game_relations([row["id"]])
+    return _serialize_game(dict(row), relations)
+
+
+def _load_collection_relations(
+    collection_ids: list[int],
+    owner_ids: list[str],
+) -> tuple[dict[str, dict[str, Any]], dict[int, list[dict[str, Any]]], dict[int, list[dict[str, Any]]]]:
+    """Load owners, shares and collection games for a set of collections."""
+    owners = _fetch_rows_by_ids("users", owner_ids)
+    owner_map = {str(owner["id"]): owner for owner in owners}
+    if not collection_ids:
+        return owner_map, {}, {}
+
+    placeholders = ", ".join("?" for _ in collection_ids)
+    with get_connection() as connection:
+        shares = _rows_to_dicts(
+            connection.execute(
+                f"SELECT * FROM collection_shares WHERE collection_id IN ({placeholders})",
+                tuple(collection_ids),
+            ).fetchall()
+        )
+        games = _rows_to_dicts(
+            connection.execute(
+                f"SELECT * FROM collection_games WHERE collection_id IN ({placeholders})",
+                tuple(collection_ids),
+            ).fetchall()
+        )
+    return owner_map, _group_rows(shares, "collection_id"), _group_rows(games, "collection_id")
+
+
+def _serialize_collection(
+    collection_row: dict[str, Any],
+    owner_map: dict[str, dict[str, Any]],
+    shares_by_collection: dict[int, list[dict[str, Any]]],
+    games_by_collection: dict[int, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Convert a raw collection row into the API response shape."""
+    collection_id = collection_row["id"]
+    owner_id = str(collection_row["owner_id"])
+    payload = dict(collection_row)
+    payload["owner"] = owner_map.get(owner_id)
+    payload["shares"] = shares_by_collection.get(collection_id, [])
+    payload["games"] = games_by_collection.get(collection_id, [])
+    return payload
+
+
+def get_games(skip: int = 0, limit: int = 100):
+    """Return paginated games with their related contributors."""
+    game_rows = _fetch_paginated_rows("games", skip=skip, limit=limit)
+    relations = _load_game_relations([row["id"] for row in game_rows])
+    return [_serialize_game(row, relations) for row in game_rows]
+
+
+def get_game(game_id: int):
+    """Return a single game by id."""
+    return _get_game_by_filters(id=game_id)
+
+
+def create_game(game: schemas.GameCreate):
+    """Create a game and its contributor relations."""
     game_data = game.model_dump()
-    author_names = game_data.pop('authors', [])
-    artist_names = game_data.pop('artists', [])
-    editor_names = game_data.pop('editors', [])
-    distributor_names = game_data.pop('distributors', [])
+    related_names = {
+        relation_name: _ensure_unique_names(game_data.pop(relation_name, []), relation_name[:-1])
+        for relation_name in GAME_RELATIONS
+    }
 
-    db_game = models.Game(**game_data)
-    db.add(db_game)
+    with get_connection() as connection:
+        columns = ", ".join(game_data.keys())
+        placeholders = ", ".join("?" for _ in game_data)
+        try:
+            cursor = connection.execute(
+                f"INSERT INTO games ({columns}) VALUES ({placeholders})",
+                tuple(game_data.values()),
+            )
+            game_id = cursor.lastrowid
+            for relation_name, names in related_names.items():
+                table, join_table, relation_id_column = GAME_RELATIONS[relation_name]
+                for name in names:
+                    related_row = _get_or_create_named_entity(connection, table, name)
+                    connection.execute(
+                        f"INSERT INTO {join_table} (game_id, {relation_id_column}) VALUES (?, ?)",
+                        (game_id, related_row["id"]),
+                    )
+            connection.commit()
+        except sqlite3.IntegrityError as exc:
+            connection.rollback()
+            _raise_write_error(exc, "Game could not be created")
 
-    try:
-        for name in author_names:
-            db_game.authors.append(_get_or_create_named_entity(db, models.Author, name))
+    return get_game(game_id)
 
-        for name in artist_names:
-            db_game.artists.append(_get_or_create_named_entity(db, models.Artist, name))
 
-        for name in editor_names:
-            db_game.editors.append(_get_or_create_named_entity(db, models.Editor, name))
+def delete_game(game_id: int):
+    """Delete a game and its join-table records."""
+    return _delete_row("games", game_id)
 
-        for name in distributor_names:
-            db_game.distributors.append(_get_or_create_named_entity(db, models.Distributor, name))
 
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Game could not be created") from exc
+def get_authors(skip: int = 0, limit: int = 100):
+    """Return paginated authors."""
+    return _fetch_paginated_rows("authors", skip=skip, limit=limit)
 
-    db.refresh(db_game)
-    return db_game
 
-def delete_game(db: Session, game_id: int):
-    db_game = db.query(models.Game).filter(models.Game.id == game_id).first()
-    if db_game:
-        db.delete(db_game)
-        db.commit()
-    return db_game
+def get_author(author_id: int):
+    """Return a single author."""
+    return _fetch_row("authors", author_id)
 
-# ============================
-# AUTHOR CRUD
-# ============================
-def get_authors(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.Author).offset(skip).limit(limit).all()
 
-def get_author(db: Session, author_id: int):
-    return db.query(models.Author).filter(models.Author.id == author_id).first()
+def create_author(author: schemas.AuthorCreate):
+    """Create an author."""
+    with get_connection() as connection:
+        try:
+            cursor = connection.execute(
+                "INSERT INTO authors (name) VALUES (?)",
+                (author.name,),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as exc:
+            _raise_write_error(exc, "Author with this name already exists")
+    return {"id": cursor.lastrowid, "name": author.name}
 
-def create_author(db: Session, author: schemas.AuthorCreate):
-    db_author = models.Author(name=author.name)
-    db.add(db_author)
-    _commit_or_409(db, "Author with this name already exists")
-    db.refresh(db_author)
-    return db_author
 
-def delete_author(db: Session, author_id: int):
-    db_author = db.query(models.Author).filter(models.Author.id == author_id).first()
-    if db_author:
-        db.delete(db_author)
-        db.commit()
-    return db_author
+def delete_author(author_id: int):
+    """Delete an author."""
+    return _delete_row("authors", author_id)
 
-# ============================
-# ARTIST CRUD
-# ============================
-def get_artists(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.Artist).offset(skip).limit(limit).all()
 
-def get_artist(db: Session, artist_id: int):
-    return db.query(models.Artist).filter(models.Artist.id == artist_id).first()
+def get_artists(skip: int = 0, limit: int = 100):
+    """Return paginated artists."""
+    return _fetch_paginated_rows("artists", skip=skip, limit=limit)
 
-def create_artist(db: Session, artist: schemas.ArtistCreate):
-    db_artist = models.Artist(name=artist.name)
-    db.add(db_artist)
-    _commit_or_409(db, "Artist with this name already exists")
-    db.refresh(db_artist)
-    return db_artist
 
-def delete_artist(db: Session, artist_id: int):
-    db_artist = db.query(models.Artist).filter(models.Artist.id == artist_id).first()
-    if db_artist:
-        db.delete(db_artist)
-        db.commit()
-    return db_artist
+def get_artist(artist_id: int):
+    """Return a single artist."""
+    return _fetch_row("artists", artist_id)
 
-# ============================
-# EDITOR CRUD
-# ============================
-def get_editors(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.Editor).offset(skip).limit(limit).all()
 
-def get_editor(db: Session, editor_id: int):
-    return db.query(models.Editor).filter(models.Editor.id == editor_id).first()
+def create_artist(artist: schemas.ArtistCreate):
+    """Create an artist."""
+    with get_connection() as connection:
+        try:
+            cursor = connection.execute(
+                "INSERT INTO artists (name) VALUES (?)",
+                (artist.name,),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as exc:
+            _raise_write_error(exc, "Artist with this name already exists")
+    return {"id": cursor.lastrowid, "name": artist.name}
 
-def create_editor(db: Session, editor: schemas.EditorCreate):
-    db_editor = models.Editor(name=editor.name)
-    db.add(db_editor)
-    _commit_or_409(db, "Editor with this name already exists")
-    db.refresh(db_editor)
-    return db_editor
 
-def delete_editor(db: Session, editor_id: int):
-    db_editor = db.query(models.Editor).filter(models.Editor.id == editor_id).first()
-    if db_editor:
-        db.delete(db_editor)
-        db.commit()
-    return db_editor
+def delete_artist(artist_id: int):
+    """Delete an artist."""
+    return _delete_row("artists", artist_id)
 
-# ============================
-# DISTRIBUTOR CRUD
-# ============================
-def get_distributors(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.Distributor).offset(skip).limit(limit).all()
 
-def get_distributor(db: Session, distributor_id: int):
-    return db.query(models.Distributor).filter(models.Distributor.id == distributor_id).first()
+def get_editors(skip: int = 0, limit: int = 100):
+    """Return paginated editors."""
+    return _fetch_paginated_rows("editors", skip=skip, limit=limit)
 
-def create_distributor(db: Session, distributor: schemas.DistributorCreate):
-    db_distributor = models.Distributor(name=distributor.name)
-    db.add(db_distributor)
-    _commit_or_409(db, "Distributor with this name already exists")
-    db.refresh(db_distributor)
-    return db_distributor
 
-def delete_distributor(db: Session, distributor_id: int):
-    db_distributor = db.query(models.Distributor).filter(models.Distributor.id == distributor_id).first()
-    if db_distributor:
-        db.delete(db_distributor)
-        db.commit()
-    return db_distributor
+def get_editor(editor_id: int):
+    """Return a single editor."""
+    return _fetch_row("editors", editor_id)
 
-# ============================
-# USER CRUD
-# ============================
-def get_users(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.User).offset(skip).limit(limit).all()
 
-def get_user(db: Session, user_id):
-    return db.query(models.User).filter(models.User.id == user_id).first()
+def create_editor(editor: schemas.EditorCreate):
+    """Create an editor."""
+    with get_connection() as connection:
+        try:
+            cursor = connection.execute(
+                "INSERT INTO editors (name) VALUES (?)",
+                (editor.name,),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as exc:
+            _raise_write_error(exc, "Editor with this name already exists")
+    return {"id": cursor.lastrowid, "name": editor.name}
 
-def create_user(db: Session, user: schemas.UserCreate, user_id: UUID | None = None):
-    db_user = models.User(id=user_id or uuid4(), email=user.email, username=user.username)
-    db.add(db_user)
-    _commit_or_409(db, "User with this email already exists")
-    db.refresh(db_user)
-    return db_user
 
-def delete_user(db: Session, user_id):
-    db_user = db.query(models.User).filter(models.User.id == user_id).first()
-    if db_user:
-        db.delete(db_user)
-        db.commit()
-    return db_user
+def delete_editor(editor_id: int):
+    """Delete an editor."""
+    return _delete_row("editors", editor_id)
 
-# ============================
-# COLLECTION CRUD
-# ============================
-def get_collections(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.Collection).offset(skip).limit(limit).all()
 
-def get_collection(db: Session, collection_id: int):
-    return db.query(models.Collection).filter(models.Collection.id == collection_id).first()
+def get_distributors(skip: int = 0, limit: int = 100):
+    """Return paginated distributors."""
+    return _fetch_paginated_rows("distributors", skip=skip, limit=limit)
 
-def create_collection(db: Session, collection: schemas.CollectionCreate, owner_id):
-    db_collection = models.Collection(
-        name=collection.name,
-        description=collection.description,
-        owner_id=owner_id
+
+def get_distributor(distributor_id: int):
+    """Return a single distributor."""
+    return _fetch_row("distributors", distributor_id)
+
+
+def create_distributor(distributor: schemas.DistributorCreate):
+    """Create a distributor."""
+    with get_connection() as connection:
+        try:
+            cursor = connection.execute(
+                "INSERT INTO distributors (name) VALUES (?)",
+                (distributor.name,),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as exc:
+            _raise_write_error(exc, "Distributor with this name already exists")
+    return {"id": cursor.lastrowid, "name": distributor.name}
+
+
+def delete_distributor(distributor_id: int):
+    """Delete a distributor."""
+    return _delete_row("distributors", distributor_id)
+
+
+def get_users(skip: int = 0, limit: int = 100):
+    """Return paginated users."""
+    return _fetch_paginated_rows("users", skip=skip, limit=limit)
+
+
+def get_user(user_id: str | UUID):
+    """Return a single user."""
+    return _fetch_row("users", str(user_id))
+
+
+def create_user(user: schemas.UserCreate, user_id: UUID | None = None):
+    """Create a user with an optional explicit id."""
+    payload = user.model_dump()
+    payload["id"] = str(user_id or uuid4())
+    with get_connection() as connection:
+        try:
+            connection.execute(
+                "INSERT INTO users (id, email, username) VALUES (?, ?, ?)",
+                (payload["id"], payload["email"], payload["username"]),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as exc:
+            _raise_write_error(exc, "User with this email already exists")
+    return payload
+
+
+def delete_user(user_id: str | UUID):
+    """Delete a user."""
+    return _delete_row("users", str(user_id))
+
+
+def get_collections(skip: int = 0, limit: int = 100):
+    """Return paginated collections with their owner, shares and games."""
+    collections = _fetch_paginated_rows("collections", skip=skip, limit=limit)
+    owner_ids = sorted({str(collection["owner_id"]) for collection in collections})
+    owner_map, shares_by_collection, games_by_collection = _load_collection_relations(
+        [collection["id"] for collection in collections],
+        owner_ids,
     )
-    db.add(db_collection)
-    db.commit()
-    db.refresh(db_collection)
-    return db_collection
+    return [
+        _serialize_collection(collection, owner_map, shares_by_collection, games_by_collection)
+        for collection in collections
+    ]
 
-def delete_collection(db: Session, collection_id: int):
-    db_collection = db.query(models.Collection).filter(models.Collection.id == collection_id).first()
-    if db_collection:
-        db.delete(db_collection)
-        db.commit()
-    return db_collection
 
-# ============================
-# COLLECTION SHARE CRUD
-# ============================
-def get_collection_shares(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.CollectionShare).offset(skip).limit(limit).all()
+def get_collection(collection_id: int):
+    """Return a single collection by id."""
+    collection = _fetch_row("collections", collection_id)
+    if collection is None:
+        return None
 
-def get_collection_share(db: Session, share_id: int):
-    return db.query(models.CollectionShare).filter(models.CollectionShare.id == share_id).first()
-
-def create_collection_share(db: Session, share: schemas.CollectionShareCreate, collection_id: int):
-    db_share = models.CollectionShare(
-        collection_id=collection_id,
-        shared_with=share.shared_with,
-        permission=share.permission
+    owner_map, shares_by_collection, games_by_collection = _load_collection_relations(
+        [collection_id],
+        [str(collection["owner_id"])],
     )
-    db.add(db_share)
-    _commit_or_409(db, "Collection share already exists or is invalid")
-    db.refresh(db_share)
-    return db_share
+    return _serialize_collection(collection, owner_map, shares_by_collection, games_by_collection)
 
-def delete_collection_share(db: Session, share_id: int):
-    db_share = db.query(models.CollectionShare).filter(models.CollectionShare.id == share_id).first()
-    if db_share:
-        db.delete(db_share)
-        db.commit()
-    return db_share
 
-# ============================
-# USER LOCATION CRUD
-# ============================
-def get_user_locations(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.UserLocation).offset(skip).limit(limit).all()
+def create_collection(collection: schemas.CollectionCreate):
+    """Create a collection."""
+    payload = collection.model_dump()
+    payload["owner_id"] = str(payload["owner_id"])
+    with get_connection() as connection:
+        try:
+            cursor = connection.execute(
+                "INSERT INTO collections (name, description, owner_id) VALUES (?, ?, ?)",
+                (payload["name"], payload["description"], payload["owner_id"]),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as exc:
+            _raise_write_error(exc, "Collection could not be created")
+    return get_collection(cursor.lastrowid)
 
-def get_user_location(db: Session, location_id: int):
-    return db.query(models.UserLocation).filter(models.UserLocation.id == location_id).first()
 
-def create_user_location(db: Session, location: schemas.UserLocationCreate, user_id):
-    db_location = models.UserLocation(
-        name=location.name,
-        user_id=user_id
-    )
-    db.add(db_location)
-    _commit_or_409(db, "User location already exists or is invalid")
-    db.refresh(db_location)
-    return db_location
+def delete_collection(collection_id: int):
+    """Delete a collection and its dependent rows."""
+    return _delete_row("collections", collection_id)
 
-def delete_user_location(db: Session, location_id: int):
-    db_location = db.query(models.UserLocation).filter(models.UserLocation.id == location_id).first()
-    if db_location:
-        db.delete(db_location)
-        db.commit()
-    return db_location
 
-# ============================
-# COLLECTION GAME CRUD
-# ============================
-def get_collection_games(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.CollectionGame).offset(skip).limit(limit).all()
+def get_collection_shares(skip: int = 0, limit: int = 100):
+    """Return paginated collection shares."""
+    return _fetch_paginated_rows("collection_shares", skip=skip, limit=limit)
 
-def get_collection_game(db: Session, collection_game_id: int):
-    return db.query(models.CollectionGame).filter(models.CollectionGame.id == collection_game_id).first()
 
-def create_collection_game(db: Session, collection_game: schemas.CollectionGameCreate):
-    db_collection_game = models.CollectionGame(
-        collection_id=collection_game.collection_id,
-        game_id=collection_game.game_id,
-        location_id=collection_game.location_id,
-        quantity=collection_game.quantity
-    )
-    db.add(db_collection_game)
-    _commit_or_409(db, "Collection game already exists or is invalid")
-    db.refresh(db_collection_game)
-    return db_collection_game
+def get_collection_share(share_id: int):
+    """Return a single collection share."""
+    return _fetch_row("collection_shares", share_id)
 
-def delete_collection_game(db: Session, collection_game_id: int):
-    db_collection_game = db.query(models.CollectionGame).filter(models.CollectionGame.id == collection_game_id).first()
-    if db_collection_game:
-        db.delete(db_collection_game)
-        db.commit()
-    return db_collection_game
+
+def create_collection_share(share: schemas.CollectionShareCreate, collection_id: int):
+    """Create a collection share."""
+    payload = share.model_dump()
+    with get_connection() as connection:
+        try:
+            cursor = connection.execute(
+                "INSERT INTO collection_shares (collection_id, shared_with, permission) VALUES (?, ?, ?)",
+                (collection_id, str(payload["shared_with"]), payload["permission"]),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as exc:
+            _raise_write_error(exc, "Collection share already exists or is invalid")
+    return {
+        "id": cursor.lastrowid,
+        "collection_id": collection_id,
+        "shared_with": str(payload["shared_with"]),
+        "permission": payload["permission"],
+    }
+
+
+def delete_collection_share(share_id: int):
+    """Delete a collection share."""
+    return _delete_row("collection_shares", share_id)
+
+
+def get_user_locations(skip: int = 0, limit: int = 100):
+    """Return paginated user locations."""
+    return _fetch_paginated_rows("user_locations", skip=skip, limit=limit)
+
+
+def get_user_location(location_id: int):
+    """Return a single user location."""
+    return _fetch_row("user_locations", location_id)
+
+
+def create_user_location(location: schemas.UserLocationCreate):
+    """Create a location for a user."""
+    payload = location.model_dump()
+    payload["user_id"] = str(payload["user_id"])
+    with get_connection() as connection:
+        try:
+            cursor = connection.execute(
+                "INSERT INTO user_locations (user_id, name) VALUES (?, ?)",
+                (payload["user_id"], payload["name"]),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as exc:
+            _raise_write_error(exc, "User location already exists or is invalid")
+    return {"id": cursor.lastrowid, **payload}
+
+
+def delete_user_location(location_id: int):
+    """Delete a user location."""
+    return _delete_row("user_locations", location_id)
+
+
+def get_collection_games(skip: int = 0, limit: int = 100):
+    """Return paginated collection games."""
+    return _fetch_paginated_rows("collection_games", skip=skip, limit=limit)
+
+
+def get_collection_game(collection_game_id: int):
+    """Return a single collection game."""
+    return _fetch_row("collection_games", collection_game_id)
+
+
+def create_collection_game(collection_game: schemas.CollectionGameCreate):
+    """Create a collection game row."""
+    payload = collection_game.model_dump()
+    with get_connection() as connection:
+        try:
+            cursor = connection.execute(
+                """
+                INSERT INTO collection_games (collection_id, game_id, location_id, quantity)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    payload["collection_id"],
+                    payload["game_id"],
+                    payload["location_id"],
+                    payload["quantity"],
+                ),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as exc:
+            _raise_write_error(exc, "Collection game already exists or is invalid")
+    return {"id": cursor.lastrowid, **payload}
+
+
+def delete_collection_game(collection_game_id: int):
+    """Delete a collection game."""
+    return _delete_row("collection_games", collection_game_id)

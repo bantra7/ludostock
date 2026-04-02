@@ -1,38 +1,24 @@
-from fastapi import Depends, FastAPI, HTTPException, Header
+"""FastAPI application entrypoint."""
+
+from contextlib import asynccontextmanager
+from typing import List
+
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional
-import os
-from uuid import UUID
-from environs import Env
-from sqlalchemy.orm import Session
-import requests
+
 from . import crud, schemas
-from .database import SessionLocal, init_db
+from .config import ALLOW_ORIGINS
+from .database import init_db
 
-# Chargement de l'environnement
-env_path = os.environ.get("ENV_PATH", ".env")
-env = Env()
-env.read_env(env_path)
 
-DB_PATH = env.str("DATABASE_URL").replace("duckdb:///", "")
-SQL_FILE = env.str("SQL_CREATION_FILE")
-ENVIRONMENT = env.str("ENVIRONMENT", "dev")
-SUPABASE_URL = env.str("SUPABASE_URL", "")
-SUPABASE_JWT_ENDPOINT = f"{SUPABASE_URL}/auth/v1/user"
-ALLOW_ORIGINS = env.list("ALLOW_ORIGINS", ["*"])
-AUTH_DISABLED = env.bool("DISABLE_AUTH", False)
-SUPABASE_TIMEOUT_SECONDS = env.float("SUPABASE_TIMEOUT_SECONDS", 5.0)
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Initialize the SQLite database on startup."""
+    init_db()
+    yield
 
-if not os.path.exists(DB_PATH):
-    print("Initialisation de la base de donnée...")
-    init_db(SQL_FILE)
-    print("Base de données initialisée.")
-else:
-    print("Base de données déjà existante.")
 
-app = FastAPI()
-
-# CORS Middleware
+app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOW_ORIGINS,
@@ -41,308 +27,305 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def verify_supabase_token(authorization: Optional[str] = Header(None)):
-    if AUTH_DISABLED:
-        return {}
 
-    if not SUPABASE_URL:
-        raise HTTPException(status_code=500, detail="SUPABASE_URL is not configured")
-
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-
-    token = authorization.split(" ", 1)[1]
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
-        response = requests.get(
-            SUPABASE_JWT_ENDPOINT,
-            headers=headers,
-            timeout=SUPABASE_TIMEOUT_SECONDS,
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(status_code=503, detail="Authentication provider unavailable") from exc
-
-    if response.status_code != 200:
-        raise HTTPException(status_code=401, detail="Invalid Supabase token")
-    return response.json()  # contient les infos utilisateur
-
-
-def get_authenticated_user_id(user_info: dict) -> UUID:
-    raw_user_id = user_info.get("id") or user_info.get("sub")
-    if not raw_user_id:
-        raise HTTPException(status_code=401, detail="Authenticated user id missing from token")
-
-    try:
-        return UUID(str(raw_user_id))
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Authenticated user id is invalid") from exc
-
-# Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-# ============================
-# GAME ENDPOINTS
-# ============================
 @app.post("/api/games/", response_model=schemas.Game, tags=["Games"])
-def create_game(game: schemas.GameCreate, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.create_game(db=db, game=game)
+def create_game(game: schemas.GameCreate):
+    """Create a game."""
+    return crud.create_game(game=game)
+
 
 @app.get("/api/games/", response_model=List[schemas.Game], tags=["Games"])
-def get_games(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.get_games(db, skip=skip, limit=limit)
+def get_games(skip: int = 0, limit: int = 100):
+    """List games."""
+    return crud.get_games(skip=skip, limit=limit)
+
 
 @app.get("/api/games/{game_id}", response_model=schemas.Game, tags=["Games"])
-def get_game(game_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_game = crud.get_game(db, game_id=game_id)
+def get_game(game_id: int):
+    """Get a game by id."""
+    db_game = crud.get_game(game_id=game_id)
     if db_game is None:
         raise HTTPException(status_code=404, detail="Game not found")
     return db_game
+
 
 @app.delete("/api/games/{game_id}", response_model=schemas.Game, tags=["Games"])
-def delete_game(game_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_game = crud.delete_game(db, game_id=game_id)
+def delete_game(game_id: int):
+    """Delete a game."""
+    db_game = crud.delete_game(game_id=game_id)
     if db_game is None:
         raise HTTPException(status_code=404, detail="Game not found")
     return db_game
 
-# ============================
-# AUTHOR ENDPOINTS
-# ============================
+
 @app.post("/api/authors/", response_model=schemas.Author, tags=["Authors"])
-def create_author(author: schemas.AuthorCreate, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.create_author(db=db, author=author)
+def create_author(author: schemas.AuthorCreate):
+    """Create an author."""
+    return crud.create_author(author=author)
+
 
 @app.get("/api/authors/", response_model=List[schemas.Author], tags=["Authors"])
-def get_authors(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.get_authors(db, skip=skip, limit=limit)
+def get_authors(skip: int = 0, limit: int = 100):
+    """List authors."""
+    return crud.get_authors(skip=skip, limit=limit)
+
 
 @app.get("/api/authors/{author_id}", response_model=schemas.Author, tags=["Authors"])
-def get_author(author_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_author = crud.get_author(db, author_id=author_id)
+def get_author(author_id: int):
+    """Get an author by id."""
+    db_author = crud.get_author(author_id=author_id)
     if db_author is None:
         raise HTTPException(status_code=404, detail="Author not found")
     return db_author
+
 
 @app.delete("/api/authors/{author_id}", response_model=schemas.Author, tags=["Authors"])
-def delete_author(author_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_author = crud.delete_author(db, author_id=author_id)
+def delete_author(author_id: int):
+    """Delete an author."""
+    db_author = crud.delete_author(author_id=author_id)
     if db_author is None:
         raise HTTPException(status_code=404, detail="Author not found")
     return db_author
 
-# ============================
-# ARTIST ENDPOINTS
-# ============================
+
 @app.post("/api/artists/", response_model=schemas.Artist, tags=["Artists"])
-def create_artist(artist: schemas.ArtistCreate, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.create_artist(db=db, artist=artist)
+def create_artist(artist: schemas.ArtistCreate):
+    """Create an artist."""
+    return crud.create_artist(artist=artist)
+
 
 @app.get("/api/artists/", response_model=List[schemas.Artist], tags=["Artists"])
-def get_artists(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.get_artists(db, skip=skip, limit=limit)
+def get_artists(skip: int = 0, limit: int = 100):
+    """List artists."""
+    return crud.get_artists(skip=skip, limit=limit)
+
 
 @app.get("/api/artists/{artist_id}", response_model=schemas.Artist, tags=["Artists"])
-def get_artist(artist_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_artist = crud.get_artist(db, artist_id=artist_id)
+def get_artist(artist_id: int):
+    """Get an artist by id."""
+    db_artist = crud.get_artist(artist_id=artist_id)
     if db_artist is None:
         raise HTTPException(status_code=404, detail="Artist not found")
     return db_artist
+
 
 @app.delete("/api/artists/{artist_id}", response_model=schemas.Artist, tags=["Artists"])
-def delete_artist(artist_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_artist = crud.delete_artist(db, artist_id=artist_id)
+def delete_artist(artist_id: int):
+    """Delete an artist."""
+    db_artist = crud.delete_artist(artist_id=artist_id)
     if db_artist is None:
         raise HTTPException(status_code=404, detail="Artist not found")
     return db_artist
 
-# ============================
-# EDITOR ENDPOINTS
-# ============================
+
 @app.post("/api/editors/", response_model=schemas.Editor, tags=["Editors"])
-def create_editor(editor: schemas.EditorCreate, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.create_editor(db=db, editor=editor)
+def create_editor(editor: schemas.EditorCreate):
+    """Create an editor."""
+    return crud.create_editor(editor=editor)
+
 
 @app.get("/api/editors/", response_model=List[schemas.Editor], tags=["Editors"])
-def get_editors(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.get_editors(db, skip=skip, limit=limit)
+def get_editors(skip: int = 0, limit: int = 100):
+    """List editors."""
+    return crud.get_editors(skip=skip, limit=limit)
+
 
 @app.get("/api/editors/{editor_id}", response_model=schemas.Editor, tags=["Editors"])
-def get_editor(editor_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_editor = crud.get_editor(db, editor_id=editor_id)
+def get_editor(editor_id: int):
+    """Get an editor by id."""
+    db_editor = crud.get_editor(editor_id=editor_id)
     if db_editor is None:
         raise HTTPException(status_code=404, detail="Editor not found")
     return db_editor
+
 
 @app.delete("/api/editors/{editor_id}", response_model=schemas.Editor, tags=["Editors"])
-def delete_editor(editor_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_editor = crud.delete_editor(db, editor_id=editor_id)
+def delete_editor(editor_id: int):
+    """Delete an editor."""
+    db_editor = crud.delete_editor(editor_id=editor_id)
     if db_editor is None:
         raise HTTPException(status_code=404, detail="Editor not found")
     return db_editor
 
-# ============================
-# DISTRIBUTOR ENDPOINTS
-# ============================
+
 @app.post("/api/distributors/", response_model=schemas.Distributor, tags=["Distributors"])
-def create_distributor(distributor: schemas.DistributorCreate, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.create_distributor(db=db, distributor=distributor)
+def create_distributor(distributor: schemas.DistributorCreate):
+    """Create a distributor."""
+    return crud.create_distributor(distributor=distributor)
+
 
 @app.get("/api/distributors/", response_model=List[schemas.Distributor], tags=["Distributors"])
-def get_distributors(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.get_distributors(db, skip=skip, limit=limit)
+def get_distributors(skip: int = 0, limit: int = 100):
+    """List distributors."""
+    return crud.get_distributors(skip=skip, limit=limit)
+
 
 @app.get("/api/distributors/{distributor_id}", response_model=schemas.Distributor, tags=["Distributors"])
-def get_distributor(distributor_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_distributor = crud.get_distributor(db, distributor_id=distributor_id)
+def get_distributor(distributor_id: int):
+    """Get a distributor by id."""
+    db_distributor = crud.get_distributor(distributor_id=distributor_id)
     if db_distributor is None:
         raise HTTPException(status_code=404, detail="Distributor not found")
     return db_distributor
+
 
 @app.delete("/api/distributors/{distributor_id}", response_model=schemas.Distributor, tags=["Distributors"])
-def delete_distributor(distributor_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_distributor = crud.delete_distributor(db, distributor_id=distributor_id)
+def delete_distributor(distributor_id: int):
+    """Delete a distributor."""
+    db_distributor = crud.delete_distributor(distributor_id=distributor_id)
     if db_distributor is None:
         raise HTTPException(status_code=404, detail="Distributor not found")
     return db_distributor
 
-# ============================
-# USER ENDPOINTS
-# ============================
+
 @app.post("/api/users/", response_model=schemas.User, tags=["Users"])
-def create_user(user: schemas.UserCreate, db: Session = Depends(get_db), user_info=Depends(verify_supabase_token)):
-    user_id = None
-    if user_info:
-        user_id = get_authenticated_user_id(user_info)
-    return crud.create_user(db=db, user=user, user_id=user_id)
+def create_user(user: schemas.UserCreate):
+    """Create a user."""
+    return crud.create_user(user=user)
+
 
 @app.get("/api/users/", response_model=List[schemas.User], tags=["Users"])
-def get_users(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user_info=Depends(verify_supabase_token)):
-    return crud.get_users(db, skip=skip, limit=limit)
+def get_users(skip: int = 0, limit: int = 100):
+    """List users."""
+    return crud.get_users(skip=skip, limit=limit)
+
 
 @app.get("/api/users/{user_id}", response_model=schemas.User, tags=["Users"])
-def get_user(user_id: str, db: Session = Depends(get_db), user_info=Depends(verify_supabase_token)):
-    db_user = crud.get_user(db, user_id=user_id)
+def get_user(user_id: str):
+    """Get a user by id."""
+    db_user = crud.get_user(user_id=user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return db_user
+
 
 @app.delete("/api/users/{user_id}", response_model=schemas.User, tags=["Users"])
-def delete_user(user_id: str, db: Session = Depends(get_db), user_info=Depends(verify_supabase_token)):
-    db_user = crud.delete_user(db, user_id=user_id)
+def delete_user(user_id: str):
+    """Delete a user."""
+    db_user = crud.delete_user(user_id=user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return db_user
 
-# ============================
-# COLLECTION ENDPOINTS
-# ============================
+
 @app.post("/api/collections/", response_model=schemas.Collection, tags=["Collections"])
-def create_collection(collection: schemas.CollectionCreate, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    owner_id = get_authenticated_user_id(user)
-    return crud.create_collection(db=db, collection=collection, owner_id=owner_id)
+def create_collection(collection: schemas.CollectionCreate):
+    """Create a collection."""
+    return crud.create_collection(collection=collection)
+
 
 @app.get("/api/collections/", response_model=List[schemas.Collection], tags=["Collections"])
-def get_collections(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.get_collections(db, skip=skip, limit=limit)
+def get_collections(skip: int = 0, limit: int = 100):
+    """List collections."""
+    return crud.get_collections(skip=skip, limit=limit)
+
 
 @app.get("/api/collections/{collection_id}", response_model=schemas.Collection, tags=["Collections"])
-def get_collection(collection_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_collection = crud.get_collection(db, collection_id=collection_id)
+def get_collection(collection_id: int):
+    """Get a collection by id."""
+    db_collection = crud.get_collection(collection_id=collection_id)
     if db_collection is None:
         raise HTTPException(status_code=404, detail="Collection not found")
     return db_collection
+
 
 @app.delete("/api/collections/{collection_id}", response_model=schemas.Collection, tags=["Collections"])
-def delete_collection(collection_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_collection = crud.delete_collection(db, collection_id=collection_id)
+def delete_collection(collection_id: int):
+    """Delete a collection."""
+    db_collection = crud.delete_collection(collection_id=collection_id)
     if db_collection is None:
         raise HTTPException(status_code=404, detail="Collection not found")
     return db_collection
 
-# ============================
-# COLLECTION SHARE ENDPOINTS
-# ============================
+
 @app.post("/api/collection_shares/", response_model=schemas.CollectionShare, tags=["CollectionShares"])
-def create_collection_share(share: schemas.CollectionShareCreate, collection_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    requester_id = get_authenticated_user_id(user)
-    db_collection = crud.get_collection(db, collection_id=collection_id)
+def create_collection_share(share: schemas.CollectionShareCreate, collection_id: int):
+    """Create a collection share."""
+    db_collection = crud.get_collection(collection_id=collection_id)
     if db_collection is None:
         raise HTTPException(status_code=404, detail="Collection not found")
-    if db_collection.owner_id != requester_id:
-        raise HTTPException(status_code=403, detail="Only the collection owner can share it")
-    return crud.create_collection_share(db=db, share=share, collection_id=collection_id)
+    return crud.create_collection_share(share=share, collection_id=collection_id)
+
 
 @app.get("/api/collection_shares/", response_model=List[schemas.CollectionShare], tags=["CollectionShares"])
-def get_collection_shares(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.get_collection_shares(db, skip=skip, limit=limit)
+def get_collection_shares(skip: int = 0, limit: int = 100):
+    """List collection shares."""
+    return crud.get_collection_shares(skip=skip, limit=limit)
+
 
 @app.get("/api/collection_shares/{share_id}", response_model=schemas.CollectionShare, tags=["CollectionShares"])
-def get_collection_share(share_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_share = crud.get_collection_share(db, share_id=share_id)
+def get_collection_share(share_id: int):
+    """Get a collection share by id."""
+    db_share = crud.get_collection_share(share_id=share_id)
     if db_share is None:
         raise HTTPException(status_code=404, detail="Collection share not found")
     return db_share
+
 
 @app.delete("/api/collection_shares/{share_id}", response_model=schemas.CollectionShare, tags=["CollectionShares"])
-def delete_collection_share(share_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_share = crud.delete_collection_share(db, share_id=share_id)
+def delete_collection_share(share_id: int):
+    """Delete a collection share."""
+    db_share = crud.delete_collection_share(share_id=share_id)
     if db_share is None:
         raise HTTPException(status_code=404, detail="Collection share not found")
     return db_share
 
-# ============================
-# USER LOCATION ENDPOINTS
-# ============================
+
 @app.post("/api/user_locations/", response_model=schemas.UserLocation, tags=["UserLocations"])
-def create_user_location(location: schemas.UserLocationCreate, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    user_id = get_authenticated_user_id(user)
-    return crud.create_user_location(db=db, location=location, user_id=user_id)
+def create_user_location(location: schemas.UserLocationCreate):
+    """Create a user location."""
+    return crud.create_user_location(location=location)
+
 
 @app.get("/api/user_locations/", response_model=List[schemas.UserLocation], tags=["UserLocations"])
-def get_user_locations(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.get_user_locations(db, skip=skip, limit=limit)
+def get_user_locations(skip: int = 0, limit: int = 100):
+    """List user locations."""
+    return crud.get_user_locations(skip=skip, limit=limit)
+
 
 @app.get("/api/user_locations/{location_id}", response_model=schemas.UserLocation, tags=["UserLocations"])
-def get_user_location(location_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_location = crud.get_user_location(db, location_id=location_id)
+def get_user_location(location_id: int):
+    """Get a user location by id."""
+    db_location = crud.get_user_location(location_id=location_id)
     if db_location is None:
         raise HTTPException(status_code=404, detail="User location not found")
     return db_location
+
 
 @app.delete("/api/user_locations/{location_id}", response_model=schemas.UserLocation, tags=["UserLocations"])
-def delete_user_location(location_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_location = crud.delete_user_location(db, location_id=location_id)
+def delete_user_location(location_id: int):
+    """Delete a user location."""
+    db_location = crud.delete_user_location(location_id=location_id)
     if db_location is None:
         raise HTTPException(status_code=404, detail="User location not found")
     return db_location
 
-# ============================
-# COLLECTION GAME ENDPOINTS
-# ============================
+
 @app.post("/api/collection_games/", response_model=schemas.CollectionGame, tags=["CollectionGames"])
-def create_collection_game(collection_game: schemas.CollectionGameCreate, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.create_collection_game(db=db, collection_game=collection_game)
+def create_collection_game(collection_game: schemas.CollectionGameCreate):
+    """Create a collection game."""
+    return crud.create_collection_game(collection_game=collection_game)
+
 
 @app.get("/api/collection_games/", response_model=List[schemas.CollectionGame], tags=["CollectionGames"])
-def get_collection_games(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    return crud.get_collection_games(db, skip=skip, limit=limit)
+def get_collection_games(skip: int = 0, limit: int = 100):
+    """List collection games."""
+    return crud.get_collection_games(skip=skip, limit=limit)
+
 
 @app.get("/api/collection_games/{collection_game_id}", response_model=schemas.CollectionGame, tags=["CollectionGames"])
-def get_collection_game(collection_game_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_collection_game = crud.get_collection_game(db, collection_game_id=collection_game_id)
+def get_collection_game(collection_game_id: int):
+    """Get a collection game by id."""
+    db_collection_game = crud.get_collection_game(collection_game_id=collection_game_id)
     if db_collection_game is None:
         raise HTTPException(status_code=404, detail="Collection game not found")
     return db_collection_game
 
+
 @app.delete("/api/collection_games/{collection_game_id}", response_model=schemas.CollectionGame, tags=["CollectionGames"])
-def delete_collection_game(collection_game_id: int, db: Session = Depends(get_db), user=Depends(verify_supabase_token)):
-    db_collection_game = crud.delete_collection_game(db, collection_game_id=collection_game_id)
+def delete_collection_game(collection_game_id: int):
+    """Delete a collection game."""
+    db_collection_game = crud.delete_collection_game(collection_game_id=collection_game_id)
     if db_collection_game is None:
         raise HTTPException(status_code=404, detail="Collection game not found")
     return db_collection_game

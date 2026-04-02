@@ -1,42 +1,58 @@
 # Backend
 
-Cette application backend est développée avec FastAPI et fournit une API pour gérer une collection de jeux de société. Elle utilise SQLAlchemy pour l'ORM, Alembic pour les migrations de base de données, et DuckDB comme base de données.
+Ce backend FastAPI utilise maintenant SQLite en local, sans Supabase ni mecanisme d'authentification.
 
-## Configuration et Exécution
+## Configuration
 
-### Prérequis
+Les variables utiles sont :
 
-- Python 3.11+
-- pip (gestionnaire de paquets Python)
+- `SQLITE_PATH` : chemin du fichier SQLite
+- `ENV_PATH` : fichier `.env` a charger
+- `ALLOW_ORIGINS` : liste CORS, en CSV ou JSON
 
-### Installation des dépendances
+Un exemple est fourni dans [backend/app/.env.example](/c:/Users/renau/projects/ludostock/backend/app/.env.example).
 
-1. Naviguez vers le répertoire `backend` :
-   ```bash
-   cd backend
-   ```
-2. Installez les dépendances Python :
-   ```bash
-   python -m pip install -r requirements.txt
-   ```
+## Installation
 
-### Exécution de l'application en mode développement
+Depuis la racine du projet :
 
-Pour démarrer le serveur de développement, exécutez le script suivant depuis le répertoire `backend` :
-
-```bash
-./start-dev.sh
+```powershell
+python -m pip install -r backend/requirements.txt
 ```
 
-Ou exécutez directement la commande uvicorn :
+## Lancer le backend en local
 
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+```powershell
+$env:ENV_PATH="backend/app/.env"
+uvicorn backend.app.main:app --host 0.0.0.0 --port 8081 --reload
 ```
 
-L'application sera alors accessible à l'adresse `http://localhost:8080`.
+Au demarrage, l'application cree automatiquement le fichier SQLite et ses tables si besoin.
 
-### Base de données
+## Importer un CSV de jeux
 
-L'application utilise DuckDB. Les migrations de base de données sont gérées avec Alembic.
-(Des instructions supplémentaires sur l'initialisation de la base de données ou l'exécution des migrations pourraient être ajoutées ici si nécessaire).
+```powershell
+$env:ENV_PATH="backend/app/.env"
+python -m backend.app.import_games --csv-path data/raw/trictac_data_games.csv
+```
+
+Le script :
+
+- convertit les colonnes du CSV ;
+- cree les jeux et les relations auteurs/artistes/editeurs/distributeurs ;
+- ecrit dans la base SQLite configuree.
+
+## Exemple d'environnement
+
+```text
+ENVIRONMENT=local
+SQLITE_PATH=backend/app/ludostock.db
+ALLOW_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+```
+
+## Tests backend
+
+```powershell
+python -m pip install -r backend/requirements-test.txt
+.\.venv\Scripts\python.exe -m pytest backend/tests
+```

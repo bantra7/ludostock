@@ -1,11 +1,4 @@
 fastapi
-uvicorn[standard]
-fastapi-sqlalchemy
-sqlalchemy
-alembic
-pylint
-duckdb
-duckdb-engine
-environs
-requests
 loguru
+pydantic-settings
+uvicorn[standard]

@@ -2,23 +2,21 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8080:8080"
+      - "8081:8081"
     environment:
-      - PORT=8080
+      - ENV_PATH=/app/app/.env
+      - PORT=8081
+      - SQLITE_PATH=/workspace/ludostock.db
+      - ALLOW_ORIGINS=http://localhost,http://localhost:80,http://127.0.0.1,http://127.0.0.1:80
     volumes:
-      - ./backend:/app
+      - ./ludostock.db:/workspace/ludostock.db
 
   frontend:
     build: ./frontend
     ports:
-      - "3000:80" # Nginx in the frontend container will serve on port 80
+      - "80:80"
     depends_on:
       - backend
-    volumes:
-      - ./frontend/src:/app/src # Mount src for development, remove for production
-      # The following volume is to ensure that node_modules is not overwritten by the host
-      # if it exists, especially during development.
-      - /app/node_modules
 
 networks:
   default:
