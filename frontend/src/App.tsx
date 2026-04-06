@@ -1,21 +1,9 @@
-import { FormEvent, useEffect, useState } from "react";
-import {
-  emptyToNull,
-  getErrorMessage,
-  joinNames,
-  parseList,
-  request,
-  toNumberOrNull,
-} from "./api";
-import {
-  defaultGameForm,
-  navItems,
-  referenceEndpoints,
-  referenceTitles,
-} from "./types";
+import { FormEvent, useDeferredValue, useEffect, useState } from "react";
+import { getErrorMessage, joinNames, request, requestAllPages } from "./api";
+import { navItems, referenceEndpoints, referenceTitles } from "./types";
 import type {
   Game,
-  GameFormState,
+  GamePage,
   NamedEntity,
   NavKey,
   ReferenceCollection,
@@ -23,9 +11,13 @@ import type {
   ReferenceKey,
 } from "./types";
 
+const GAME_PAGE_SIZE = 50;
+
 function App() {
   const [activeNav, setActiveNav] = useState<NavKey>("overview");
   const [games, setGames] = useState<Game[]>([]);
+  const [catalogGameCount, setCatalogGameCount] = useState(0);
+  const [totalGames, setTotalGames] = useState(0);
   const [references, setReferences] = useState<ReferenceCollection>({
     authors: [],
     artists: [],
@@ -38,70 +30,101 @@ function App() {
     editors: "",
     distributors: "",
   });
-  const [gameForm, setGameForm] = useState<GameFormState>(defaultGameForm);
-  const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSavingGame, setIsSavingGame] = useState(false);
+  const [isGamesLoading, setIsGamesLoading] = useState(true);
+  const [areReferencesLoading, setAreReferencesLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [yearFilter, setYearFilter] = useState("");
+  const [playerFilter, setPlayerFilter] = useState("all");
+  const [durationFilter, setDurationFilter] = useState("all");
+  const [authorFilter, setAuthorFilter] = useState("");
+  const [artistFilter, setArtistFilter] = useState("");
+  const [editorFilter, setEditorFilter] = useState("");
+  const [distributorFilter, setDistributorFilter] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [gamesRefreshToken, setGamesRefreshToken] = useState(0);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const deferredSearch = useDeferredValue(search);
+  const deferredYearFilter = useDeferredValue(yearFilter);
 
   useEffect(() => {
-    void loadAllData();
+    void loadReferenceData();
   }, []);
 
   useEffect(() => {
-    if (selectedGameId === null && games.length > 0) {
-      setSelectedGameId(games[0].id);
-      return;
-    }
+    setCurrentPage(1);
+  }, [deferredSearch, typeFilter, deferredYearFilter]);
 
-    if (selectedGameId !== null && !games.some((game) => game.id === selectedGameId)) {
-      setSelectedGameId(games[0]?.id ?? null);
-    }
-  }, [games, selectedGameId]);
+  useEffect(() => {
+    void loadGamesPage(currentPage);
+  }, [currentPage, deferredSearch, typeFilter, deferredYearFilter, gamesRefreshToken]);
 
-  async function loadAllData() {
-    setIsLoading(true);
+  useEffect(() => {
+    if (!hasLoadedOnce && !isGamesLoading && !areReferencesLoading) {
+      setHasLoadedOnce(true);
+    }
+  }, [areReferencesLoading, hasLoadedOnce, isGamesLoading]);
+
+  async function loadReferenceData() {
+    setAreReferencesLoading(true);
     try {
-      const [gamesData, authorsData, artistsData, editorsData, distributorsData] = await Promise.all([
-        request<Game[]>("/games/"),
-        request<NamedEntity[]>("/authors/"),
-        request<NamedEntity[]>("/artists/"),
-        request<NamedEntity[]>("/editors/"),
-        request<NamedEntity[]>("/distributors/"),
+      const [authorsData, artistsData, editorsData, distributorsData] = await Promise.all([
+        requestAllPages<NamedEntity>("/authors/"),
+        requestAllPages<NamedEntity>("/artists/"),
+        requestAllPages<NamedEntity>("/editors/"),
+        requestAllPages<NamedEntity>("/distributors/"),
       ]);
 
-      setGames(gamesData);
       setReferences({
         authors: authorsData,
         artists: artistsData,
         editors: editorsData,
         distributors: distributorsData,
       });
-      setMessage(null);
     } catch (error) {
       setMessage({ tone: "error", text: getErrorMessage(error) });
     } finally {
-      setIsLoading(false);
+      setAreReferencesLoading(false);
     }
   }
 
-  async function refreshReferences() {
-    const [authorsData, artistsData, editorsData, distributorsData] = await Promise.all([
-      request<NamedEntity[]>("/authors/"),
-      request<NamedEntity[]>("/artists/"),
-      request<NamedEntity[]>("/editors/"),
-      request<NamedEntity[]>("/distributors/"),
-    ]);
+  async function loadGamesPage(pageNumber: number) {
+    setIsGamesLoading(true);
+    try {
+      const params = new URLSearchParams({
+        skip: String((pageNumber - 1) * GAME_PAGE_SIZE),
+        limit: String(GAME_PAGE_SIZE),
+      });
 
-    setReferences({
-      authors: authorsData,
-      artists: artistsData,
-      editors: editorsData,
-      distributors: distributorsData,
-    });
+      if (deferredSearch.trim()) {
+        params.set("search", deferredSearch.trim());
+      }
+
+      if (typeFilter.trim()) {
+        params.set("type", typeFilter.trim());
+      }
+
+      if (deferredYearFilter.trim()) {
+        params.set("year", deferredYearFilter.trim());
+      }
+
+      const page = await request<GamePage>(`/games/?${params.toString()}`);
+      if (page.items.length === 0 && page.total > 0 && page.skip >= page.total) {
+        setCurrentPage(Math.max(1, Math.ceil(page.total / GAME_PAGE_SIZE)));
+        return;
+      }
+
+      setGames(page.items);
+      setTotalGames(page.total);
+      if (!deferredSearch.trim() && !typeFilter.trim() && !deferredYearFilter.trim()) {
+        setCatalogGameCount(page.total);
+      }
+    } catch (error) {
+      setMessage({ tone: "error", text: getErrorMessage(error) });
+    } finally {
+      setIsGamesLoading(false);
+    }
   }
 
   async function createReference(kind: ReferenceKey, event: FormEvent<HTMLFormElement>) {
@@ -156,49 +179,6 @@ function App() {
     }
   }
 
-  async function createGame(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setIsSavingGame(true);
-
-    try {
-      const payload = {
-        name: gameForm.name.trim(),
-        type: gameForm.type.trim(),
-        extension_of_id: toNumberOrNull(gameForm.extension_of_id),
-        creation_year: toNumberOrNull(gameForm.creation_year),
-        min_players: toNumberOrNull(gameForm.min_players),
-        max_players: toNumberOrNull(gameForm.max_players),
-        min_age: toNumberOrNull(gameForm.min_age),
-        duration_minutes: toNumberOrNull(gameForm.duration_minutes),
-        url: emptyToNull(gameForm.url),
-        image_url: emptyToNull(gameForm.image_url),
-        authors: parseList(gameForm.authors),
-        artists: parseList(gameForm.artists),
-        editors: parseList(gameForm.editors),
-        distributors: parseList(gameForm.distributors),
-      };
-
-      if (!payload.name || !payload.type) {
-        throw new Error("Le nom et le type du jeu sont obligatoires.");
-      }
-
-      const createdGame = await request<Game>("/games/", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-
-      setGames((current) => [createdGame, ...current]);
-      setSelectedGameId(createdGame.id);
-      setGameForm(defaultGameForm);
-      await refreshReferences();
-      setMessage({ tone: "success", text: `${createdGame.name} a ete ajoute au referentiel.` });
-    } catch (error) {
-      setMessage({ tone: "error", text: getErrorMessage(error) });
-    } finally {
-      setIsSavingGame(false);
-    }
-  }
-
   async function deleteGame(gameId: number) {
     const game = games.find((entry) => entry.id === gameId);
     if (!game) {
@@ -211,27 +191,17 @@ function App() {
 
     try {
       await request(`/games/${gameId}`, { method: "DELETE" });
-      setGames((current) => current.filter((entry) => entry.id !== gameId));
+      setGamesRefreshToken((current) => current + 1);
       setMessage({ tone: "success", text: `${game.name} a ete supprime.` });
     } catch (error) {
       setMessage({ tone: "error", text: getErrorMessage(error) });
     }
   }
 
-  const selectedGame = games.find((game) => game.id === selectedGameId) ?? null;
-  const filteredGames = games.filter((game) => {
-    const loweredSearch = search.trim().toLowerCase();
-    const matchesSearch =
-      loweredSearch.length === 0 ||
-      game.name.toLowerCase().includes(loweredSearch) ||
-      game.authors.some((author) => author.name.toLowerCase().includes(loweredSearch)) ||
-      game.editors.some((editor) => editor.name.toLowerCase().includes(loweredSearch));
-    const matchesType = typeFilter.length === 0 || game.type === typeFilter;
-    const matchesYear =
-      yearFilter.length === 0 || String(game.creation_year ?? "").includes(yearFilter.trim());
-    return matchesSearch && matchesType && matchesYear;
-  });
-  const availableTypes = Array.from(new Set(games.map((game) => game.type))).sort();
+  const availableTypes = Array.from(new Set([...games.map((game) => game.type), typeFilter].filter(Boolean))).sort();
+  const totalPages = Math.max(1, Math.ceil(totalGames / GAME_PAGE_SIZE));
+  const pageStart = totalGames === 0 ? 0 : (currentPage - 1) * GAME_PAGE_SIZE + 1;
+  const pageEnd = totalGames === 0 ? 0 : Math.min(currentPage * GAME_PAGE_SIZE, totalGames);
 
   return (
     <div className="app-shell">
@@ -240,7 +210,6 @@ function App() {
           <div className="brand-mark" />
           <div>
             <p className="brand-title">Ludostock</p>
-            <p className="brand-subtitle">Referentiel metier</p>
           </div>
         </div>
 
@@ -265,16 +234,16 @@ function App() {
 
         {message ? <section className={`flash flash-${message.tone}`}>{message.text}</section> : null}
 
-        {isLoading ? (
+        {!hasLoadedOnce ? (
           <section className="loading-card">
             <h2>Chargement du referentiel</h2>
             <p>Recuperation des jeux, auteurs, editeurs et distributeurs depuis FastAPI.</p>
           </section>
         ) : null}
 
-        {!isLoading && activeNav === "overview" ? (
+        {hasLoadedOnce && activeNav === "overview" ? (
           <OverviewSection
-            gameCount={games.length}
+            gameCount={catalogGameCount || totalGames}
             authorCount={references.authors.length}
             artistCount={references.artists.length}
             editorCount={references.editors.length}
@@ -283,28 +252,52 @@ function App() {
           />
         ) : null}
 
-        {!isLoading && activeNav === "games" ? (
+        {hasLoadedOnce && activeNav === "games" ? (
           <GamesSection
             availableTypes={availableTypes}
-            filteredGames={filteredGames}
-            gameForm={gameForm}
-            isSavingGame={isSavingGame}
+            artistFilter={artistFilter}
+            authorFilter={authorFilter}
+            currentPage={currentPage}
+            distributorFilter={distributorFilter}
+            durationFilter={durationFilter}
+            editorFilter={editorFilter}
+            games={games}
+            isGamesLoading={isGamesLoading}
+            pageEnd={pageEnd}
+            pageStart={pageStart}
+            playerFilter={playerFilter}
             search={search}
-            selectedGame={selectedGame}
+            totalGames={totalGames}
+            totalPages={totalPages}
             typeFilter={typeFilter}
             yearFilter={yearFilter}
-            onCreateGame={createGame}
+            onArtistFilterChange={setArtistFilter}
+            onAuthorFilterChange={setAuthorFilter}
             onDeleteGame={deleteGame}
-            onResetGameForm={() => setGameForm(defaultGameForm)}
+            onDistributorFilterChange={setDistributorFilter}
+            onPageChange={setCurrentPage}
+            onDurationFilterChange={setDurationFilter}
+            onEditorFilterChange={setEditorFilter}
             onSearchChange={setSearch}
-            onSelectGame={setSelectedGameId}
+            onPlayerFilterChange={setPlayerFilter}
+            onResetFilters={() => {
+              setSearch("");
+              setTypeFilter("");
+              setYearFilter("");
+              setPlayerFilter("all");
+              setDurationFilter("all");
+              setAuthorFilter("");
+              setArtistFilter("");
+              setEditorFilter("");
+              setDistributorFilter("");
+              setCurrentPage(1);
+            }}
             onTypeFilterChange={setTypeFilter}
-            onUpdateGameForm={setGameForm}
             onYearFilterChange={setYearFilter}
           />
         ) : null}
 
-        {!isLoading && ["authors", "artists", "editors", "distributors"].includes(activeNav) ? (
+        {hasLoadedOnce && ["authors", "artists", "editors", "distributors"].includes(activeNav) ? (
           <EntitiesSection
             activeNav={activeNav as ReferenceKey}
             drafts={referenceDrafts}
@@ -364,53 +357,126 @@ function OverviewSection({
 
 function GamesSection(props: {
   availableTypes: string[];
-  filteredGames: Game[];
-  gameForm: GameFormState;
-  isSavingGame: boolean;
+  artistFilter: string;
+  authorFilter: string;
+  currentPage: number;
+  distributorFilter: string;
+  durationFilter: string;
+  editorFilter: string;
+  games: Game[];
+  isGamesLoading: boolean;
+  pageEnd: number;
+  pageStart: number;
+  playerFilter: string;
   search: string;
-  selectedGame: Game | null;
+  totalGames: number;
+  totalPages: number;
   typeFilter: string;
   yearFilter: string;
-  onCreateGame: (event: FormEvent<HTMLFormElement>) => void;
+  onArtistFilterChange: (value: string) => void;
+  onAuthorFilterChange: (value: string) => void;
   onDeleteGame: (gameId: number) => void;
-  onResetGameForm: () => void;
+  onDistributorFilterChange: (value: string) => void;
+  onDurationFilterChange: (value: string) => void;
+  onEditorFilterChange: (value: string) => void;
+  onPageChange: (page: number) => void;
+  onPlayerFilterChange: (value: string) => void;
+  onResetFilters: () => void;
   onSearchChange: (value: string) => void;
-  onSelectGame: (gameId: number) => void;
   onTypeFilterChange: (value: string) => void;
-  onUpdateGameForm: (updater: (current: GameFormState) => GameFormState) => void;
   onYearFilterChange: (value: string) => void;
 }) {
+  const [hoveredGameId, setHoveredGameId] = useState<number | null>(null);
   const {
     availableTypes,
-    filteredGames,
-    gameForm,
-    isSavingGame,
+    artistFilter,
+    authorFilter,
+    currentPage,
+    distributorFilter,
+    durationFilter,
+    editorFilter,
+    games,
+    isGamesLoading,
+    pageEnd,
+    pageStart,
+    playerFilter,
     search,
-    selectedGame,
+    totalGames,
+    totalPages,
     typeFilter,
     yearFilter,
-    onCreateGame,
+    onArtistFilterChange,
+    onAuthorFilterChange,
     onDeleteGame,
-    onResetGameForm,
+    onDistributorFilterChange,
+    onDurationFilterChange,
+    onEditorFilterChange,
+    onPageChange,
+    onPlayerFilterChange,
+    onResetFilters,
     onSearchChange,
-    onSelectGame,
     onTypeFilterChange,
-    onUpdateGameForm,
     onYearFilterChange,
   } = props;
+  const filteredGames = games.filter((game) => {
+    if (!matchesPlayerFilter(game, playerFilter)) {
+      return false;
+    }
+    if (!matchesDurationFilter(game, durationFilter)) {
+      return false;
+    }
+    if (!matchesOccurrenceFilter(game.authors, authorFilter)) {
+      return false;
+    }
+    if (!matchesOccurrenceFilter(game.artists, artistFilter)) {
+      return false;
+    }
+    if (!matchesOccurrenceFilter(game.editors, editorFilter)) {
+      return false;
+    }
+    if (!matchesOccurrenceFilter(game.distributors, distributorFilter)) {
+      return false;
+    }
+    return true;
+  });
+  const visibleCount = filteredGames.length;
+  const loadedCount = games.length;
+  const hasAdvancedFilters =
+    playerFilter !== "all" ||
+    durationFilter !== "all" ||
+    Boolean(authorFilter.trim()) ||
+    Boolean(artistFilter.trim()) ||
+    Boolean(editorFilter.trim()) ||
+    Boolean(distributorFilter.trim());
 
   return (
     <section className="games-layout">
-      <div className="games-main">
-        <section className="section-intro">
-          <p className="eyebrow">Gestion des jeux</p>
-          <h2>Liste, detail et creation</h2>
-          <p>Le formulaire suit le payload GameCreate du backend, avec contributeurs par noms.</p>
+      <section className="games-main">
+        <section className="games-toolbar panel">
+          <div className="section-intro">
+            <h2>Jeux</h2>
+            <p>Liste paginee du catalogue avec filtres serveur puis filtres rapides sur la page chargee.</p>
+          </div>
+
+          <div className="games-summary">
+            <div className="summary-pill">
+              <strong>{visibleCount}</strong>
+              <span>visibles</span>
+            </div>
+            <div className="summary-pill">
+              <strong>{loadedCount}</strong>
+              <span>charges</span>
+            </div>
+            <div className="summary-pill">
+              <strong>{totalGames}</strong>
+              <span>resultats</span>
+            </div>
+          </div>
         </section>
 
-        <section className="filter-bar">
+        <section className="filter-bar panel">
           <label className="field">
-            <span>Recherche locale</span>
+            <span>Recherche serveur</span>
             <input value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Nom, auteur ou editeur" />
           </label>
 
@@ -430,36 +496,166 @@ function GamesSection(props: {
             <span>Annee</span>
             <input value={yearFilter} onChange={(event) => onYearFilterChange(event.target.value)} placeholder="1995" />
           </label>
+
+          <label className="field">
+            <span>Joueurs</span>
+            <select value={playerFilter} onChange={(event) => onPlayerFilterChange(event.target.value)}>
+              <option value="all">Tous</option>
+              <option value="solo">Solo possible</option>
+              <option value="duo">Jouable a 2</option>
+              <option value="group">Jouable a 4+</option>
+              <option value="party">Grand groupe 6+</option>
+            </select>
+          </label>
+
+          <label className="field">
+            <span>Duree</span>
+            <select value={durationFilter} onChange={(event) => onDurationFilterChange(event.target.value)}>
+              <option value="all">Toutes</option>
+              <option value="short">30 min ou moins</option>
+              <option value="medium">31 a 60 min</option>
+              <option value="long">61 a 120 min</option>
+              <option value="epic">Plus de 120 min</option>
+              <option value="unknown">Non renseignee</option>
+            </select>
+          </label>
+
+          <label className="field">
+            <span>Auteur contient</span>
+            <input
+              value={authorFilter}
+              onChange={(event) => onAuthorFilterChange(event.target.value)}
+              placeholder="Knizia"
+            />
+          </label>
+
+          <label className="field">
+            <span>Artiste contient</span>
+            <input
+              value={artistFilter}
+              onChange={(event) => onArtistFilterChange(event.target.value)}
+              placeholder="Mujunsha"
+            />
+          </label>
+
+          <label className="field">
+            <span>Editeur contient</span>
+            <input
+              value={editorFilter}
+              onChange={(event) => onEditorFilterChange(event.target.value)}
+              placeholder="Asmodee"
+            />
+          </label>
+
+          <label className="field">
+            <span>Distributeur contient</span>
+            <input
+              value={distributorFilter}
+              onChange={(event) => onDistributorFilterChange(event.target.value)}
+              placeholder="Pixie"
+            />
+          </label>
+
+          <div className="filter-actions">
+            <button type="button" className="secondary-button" onClick={onResetFilters}>
+              Reinitialiser
+            </button>
+          </div>
+        </section>
+
+        <section className="panel panel-form">
+          <div className="section-intro compact">
+            <h2>
+              {totalGames === 0
+                ? "Aucun resultat"
+                : `${pageStart}-${pageEnd} sur ${totalGames}`}
+            </h2>
+            <p>
+              {hasAdvancedFilters
+                ? `${visibleCount} jeux correspondent aux filtres rapides sur cette page.`
+                : "Tous les jeux charges sur cette page sont affiches."}
+            </p>
+          </div>
+
+          <div className="form-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={currentPage <= 1 || isGamesLoading}
+              onClick={() => onPageChange(currentPage - 1)}
+            >
+              Page precedente
+            </button>
+            <span>
+              Page {currentPage} / {totalPages}
+            </span>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={currentPage >= totalPages || isGamesLoading}
+              onClick={() => onPageChange(currentPage + 1)}
+            >
+              Page suivante
+            </button>
+          </div>
         </section>
 
         <section className="panel panel-table">
           <div className="table-head">
             <div>Nom</div>
             <div>Type</div>
+            <div>Annee</div>
+            <div>Joueurs</div>
+            <div>Duree</div>
             <div>Auteurs</div>
             <div>Editeurs</div>
             <div>Actions</div>
           </div>
 
           <div className="table-body">
-            {filteredGames.length === 0 ? (
+            {isGamesLoading ? (
               <div className="empty-state">
-                <h3>Aucun jeu visible</h3>
-                <p>Affinez moins les filtres ou creez un nouveau jeu depuis le formulaire.</p>
+                <h3>Chargement</h3>
+              </div>
+            ) : games.length === 0 ? (
+              <div className="empty-state">
+                <h3>Aucun jeu</h3>
+              </div>
+            ) : filteredGames.length === 0 ? (
+              <div className="empty-state">
+                <h3>Aucun jeu ne correspond aux filtres rapides</h3>
               </div>
             ) : (
               filteredGames.map((game) => (
                 <div key={game.id} className="table-row">
-                  <button type="button" className="table-link" onClick={() => onSelectGame(game.id)}>
-                    {game.name}
-                  </button>
+                  <div
+                    className="table-name-cell"
+                    onMouseEnter={() => setHoveredGameId(game.id)}
+                    onMouseLeave={() => setHoveredGameId((current) => (current === game.id ? null : current))}
+                  >
+                    {game.url ? (
+                      <a
+                        href={game.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="table-link"
+                        onFocus={() => setHoveredGameId(game.id)}
+                        onBlur={() => setHoveredGameId((current) => (current === game.id ? null : current))}
+                      >
+                        {game.name}
+                      </a>
+                    ) : (
+                      <span className="table-link table-link-static">{game.name}</span>
+                    )}
+                    <GameHoverCard game={game} isVisible={hoveredGameId === game.id} />
+                  </div>
                   <div>{game.type}</div>
+                  <div>{game.creation_year ?? "-"}</div>
+                  <div>{formatPlayers(game)}</div>
+                  <div>{formatDuration(game.duration_minutes)}</div>
                   <div>{joinNames(game.authors)}</div>
                   <div>{joinNames(game.editors)}</div>
                   <div className="row-actions">
-                    <button type="button" className="link-button" onClick={() => onSelectGame(game.id)}>
-                      Voir
-                    </button>
                     <button type="button" className="link-button danger" onClick={() => onDeleteGame(game.id)}>
                       Supprimer
                     </button>
@@ -469,204 +665,35 @@ function GamesSection(props: {
             )}
           </div>
         </section>
-
-        <section className="panel panel-form">
-          <div className="section-intro compact">
-            <p className="eyebrow">Creation d'un jeu</p>
-            <h2>Nouveau jeu</h2>
-            <p>Les listes de contributeurs acceptent des noms separes par des virgules.</p>
-          </div>
-
-          <form className="game-form" onSubmit={onCreateGame}>
-            <div className="form-grid">
-              <Field label="Nom du jeu" wide>
-                <input
-                  value={gameForm.name}
-                  onChange={(event) => onUpdateGameForm((current) => ({ ...current, name: event.target.value }))}
-                  placeholder="Terraforming Mars"
-                />
-              </Field>
-
-              <Field label="Type">
-                <select
-                  value={gameForm.type}
-                  onChange={(event) => onUpdateGameForm((current) => ({ ...current, type: event.target.value }))}
-                >
-                  <option value="Jeu de base">Jeu de base</option>
-                  <option value="Extension">Extension</option>
-                  <option value="Accessoire">Accessoire</option>
-                </select>
-              </Field>
-
-              <Field label="Extension de (id)">
-                <input
-                  value={gameForm.extension_of_id}
-                  onChange={(event) =>
-                    onUpdateGameForm((current) => ({ ...current, extension_of_id: event.target.value }))
-                  }
-                  placeholder="Laisser vide"
-                />
-              </Field>
-
-              <Field label="Annee">
-                <input
-                  value={gameForm.creation_year}
-                  onChange={(event) => onUpdateGameForm((current) => ({ ...current, creation_year: event.target.value }))}
-                  placeholder="2016"
-                />
-              </Field>
-
-              <Field label="Joueurs min">
-                <input
-                  value={gameForm.min_players}
-                  onChange={(event) => onUpdateGameForm((current) => ({ ...current, min_players: event.target.value }))}
-                  placeholder="1"
-                />
-              </Field>
-
-              <Field label="Joueurs max">
-                <input
-                  value={gameForm.max_players}
-                  onChange={(event) => onUpdateGameForm((current) => ({ ...current, max_players: event.target.value }))}
-                  placeholder="5"
-                />
-              </Field>
-
-              <Field label="Age min">
-                <input
-                  value={gameForm.min_age}
-                  onChange={(event) => onUpdateGameForm((current) => ({ ...current, min_age: event.target.value }))}
-                  placeholder="12"
-                />
-              </Field>
-
-              <Field label="Duree (minutes)">
-                <input
-                  value={gameForm.duration_minutes}
-                  onChange={(event) =>
-                    onUpdateGameForm((current) => ({ ...current, duration_minutes: event.target.value }))
-                  }
-                  placeholder="120"
-                />
-              </Field>
-
-              <Field label="URL fiche" wide>
-                <input
-                  value={gameForm.url}
-                  onChange={(event) => onUpdateGameForm((current) => ({ ...current, url: event.target.value }))}
-                  placeholder="https://..."
-                />
-              </Field>
-
-              <Field label="URL image" wide>
-                <input
-                  value={gameForm.image_url}
-                  onChange={(event) =>
-                    onUpdateGameForm((current) => ({ ...current, image_url: event.target.value }))
-                  }
-                  placeholder="https://..."
-                />
-              </Field>
-
-              <Field label="Auteurs" wide>
-                <input
-                  value={gameForm.authors}
-                  onChange={(event) => onUpdateGameForm((current) => ({ ...current, authors: event.target.value }))}
-                  placeholder="Bruno Cathala, Antoine Bauza"
-                />
-              </Field>
-
-              <Field label="Artistes" wide>
-                <input
-                  value={gameForm.artists}
-                  onChange={(event) => onUpdateGameForm((current) => ({ ...current, artists: event.target.value }))}
-                  placeholder="Optionnel"
-                />
-              </Field>
-
-              <Field label="Editeurs" wide>
-                <input
-                  value={gameForm.editors}
-                  onChange={(event) => onUpdateGameForm((current) => ({ ...current, editors: event.target.value }))}
-                  placeholder="Repos Production, Space Cowboys"
-                />
-              </Field>
-
-              <Field label="Distributeurs" wide>
-                <input
-                  value={gameForm.distributors}
-                  onChange={(event) =>
-                    onUpdateGameForm((current) => ({ ...current, distributors: event.target.value }))
-                  }
-                  placeholder="Asmodee"
-                />
-              </Field>
-            </div>
-
-            <div className="form-actions">
-              <button type="button" className="secondary-button" onClick={onResetGameForm}>
-                Reinitialiser
-              </button>
-              <button type="submit" className="primary-button" disabled={isSavingGame}>
-                {isSavingGame ? "Creation..." : "Creer le jeu"}
-              </button>
-            </div>
-          </form>
-        </section>
-      </div>
-
-      <aside className="detail-panel">
-        <div className="section-intro compact">
-          <p className="eyebrow">Detail</p>
-          <h2>{selectedGame ? selectedGame.name : "Selectionner un jeu"}</h2>
-          <p>{selectedGame ? "GET /api/games/{id}" : "Choisissez une ligne dans la liste."}</p>
-        </div>
-
-        {selectedGame ? (
-          <div className="detail-content">
-            <DetailField label="Type" value={selectedGame.type} />
-            <DetailField label="Annee" value={selectedGame.creation_year ?? "-"} />
-            <DetailField
-              label="Joueurs"
-              value={
-                selectedGame.min_players && selectedGame.max_players
-                  ? `${selectedGame.min_players} - ${selectedGame.max_players}`
-                  : "-"
-              }
-            />
-            <DetailField label="Age minimum" value={selectedGame.min_age ?? "-"} />
-            <DetailField label="Duree" value={selectedGame.duration_minutes ? `${selectedGame.duration_minutes} min` : "-"} />
-
-            <ChipsSection label="Auteurs" items={selectedGame.authors} emptyLabel="Aucun auteur" />
-            <ChipsSection label="Artistes" items={selectedGame.artists} emptyLabel="Aucun artiste" />
-            <ChipsSection label="Editeurs" items={selectedGame.editors} emptyLabel="Aucun editeur" />
-            <ChipsSection label="Distributeurs" items={selectedGame.distributors} emptyLabel="Aucun distributeur" />
-
-            <div className="detail-links">
-              {selectedGame.url ? (
-                <a href={selectedGame.url} target="_blank" rel="noreferrer">
-                  Ouvrir la fiche
-                </a>
-              ) : null}
-              {selectedGame.image_url ? (
-                <a href={selectedGame.image_url} target="_blank" rel="noreferrer">
-                  Ouvrir l'image
-                </a>
-              ) : null}
-            </div>
-
-            <button type="button" className="danger-button" onClick={() => onDeleteGame(selectedGame.id)}>
-              Supprimer le jeu
-            </button>
-          </div>
-        ) : (
-          <div className="empty-state">
-            <h3>Aucun jeu selectionne</h3>
-            <p>La vue detail s'aligne sur le endpoint de lecture unitaire du backend.</p>
-          </div>
-        )}
-      </aside>
+      </section>
     </section>
+  );
+}
+
+function GameHoverCard({ game, isVisible }: { game: Game; isVisible: boolean }) {
+  const playerCount =
+    game.min_players !== null && game.max_players !== null
+      ? `${game.min_players}-${game.max_players} joueurs`
+      : null;
+  const meta = [game.creation_year ?? null, playerCount, game.duration_minutes ? `${game.duration_minutes} min` : null]
+    .filter(Boolean)
+    .join(" / ");
+
+  return (
+    <div className={`game-hover-card ${isVisible ? "is-visible" : ""}`} aria-hidden={!isVisible}>
+      <div className="game-hover-media">
+        {game.image_url ? (
+          <img src={game.image_url} alt={game.name} loading="lazy" />
+        ) : (
+          <div className="game-hover-fallback">{game.name.slice(0, 1).toUpperCase()}</div>
+        )}
+      </div>
+      <div className="game-hover-body">
+        <p className="game-hover-type">{game.type}</p>
+        <h3>{game.name}</h3>
+        {meta ? <p className="game-hover-meta">{meta}</p> : null}
+      </div>
+    </div>
   );
 }
 
@@ -756,40 +783,85 @@ function Field({
   );
 }
 
-function DetailField({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="detail-field">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
+function formatPlayers(game: Game) {
+  if (game.min_players !== null && game.max_players !== null) {
+    return `${game.min_players}-${game.max_players}`;
+  }
+  if (game.min_players !== null) {
+    return `${game.min_players}+`;
+  }
+  if (game.max_players !== null) {
+    return `jusqu'a ${game.max_players}`;
+  }
+  return "-";
 }
 
-function ChipsSection({
-  emptyLabel,
-  items,
-  label,
-}: {
-  emptyLabel: string;
-  items: NamedEntity[];
-  label: string;
-}) {
-  return (
-    <div className="chips-group">
-      <p className="chips-title">{label}</p>
-      {items.length === 0 ? (
-        <p className="empty-inline">{emptyLabel}</p>
-      ) : (
-        <div className="chips-wrap">
-          {items.map((item) => (
-            <span key={item.id} className="chip">
-              {item.name}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+function formatDuration(duration: number | null) {
+  return duration ? `${duration} min` : "-";
+}
+
+function matchesPlayerFilter(game: Game, filter: string) {
+  if (filter === "all") {
+    return true;
+  }
+
+  if (filter === "solo") {
+    return game.min_players !== null && game.min_players <= 1;
+  }
+
+  if (filter === "duo") {
+    return game.min_players !== null && game.max_players !== null && game.min_players <= 2 && game.max_players >= 2;
+  }
+
+  if (filter === "group") {
+    return game.max_players !== null && game.max_players >= 4;
+  }
+
+  if (filter === "party") {
+    return game.max_players !== null && game.max_players >= 6;
+  }
+
+  return true;
+}
+
+function matchesDurationFilter(game: Game, filter: string) {
+  if (filter === "all") {
+    return true;
+  }
+
+  if (filter === "unknown") {
+    return game.duration_minutes === null;
+  }
+
+  if (game.duration_minutes === null) {
+    return false;
+  }
+
+  if (filter === "short") {
+    return game.duration_minutes <= 30;
+  }
+
+  if (filter === "medium") {
+    return game.duration_minutes >= 31 && game.duration_minutes <= 60;
+  }
+
+  if (filter === "long") {
+    return game.duration_minutes >= 61 && game.duration_minutes <= 120;
+  }
+
+  if (filter === "epic") {
+    return game.duration_minutes > 120;
+  }
+
+  return true;
+}
+
+function matchesOccurrenceFilter(items: NamedEntity[], filter: string) {
+  const query = filter.trim().toLocaleLowerCase();
+  if (!query) {
+    return true;
+  }
+  return items.some((item) => item.name.toLocaleLowerCase().includes(query));
 }
 
 export default App;

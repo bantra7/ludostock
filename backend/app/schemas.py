@@ -110,6 +110,15 @@ class Game(GameBase):
     distributors: List[Distributor] = Field(default_factory=list)
 
 
+class GamePage(OrmSchema):
+    """Paginated game list response."""
+
+    items: List[Game] = Field(default_factory=list)
+    total: int
+    skip: int
+    limit: int
+
+
 class UserBase(OrmSchema):
     """Shared user fields."""
 

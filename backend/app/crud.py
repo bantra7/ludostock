@@ -51,6 +51,52 @@ def _fetch_paginated_rows(table: str, skip: int = 0, limit: int = 100) -> list[d
     return _rows_to_dicts(rows)
 
 
+def _build_game_filters(
+    search: str | None = None,
+    game_type: str | None = None,
+    year: str | None = None,
+) -> tuple[str, list[Any]]:
+    """Build the SQL filter clause for paginated game queries."""
+    clauses: list[str] = []
+    parameters: list[Any] = []
+
+    if search and search.strip():
+        pattern = f"%{search.strip().lower()}%"
+        clauses.append(
+            """
+            (
+                LOWER(g.name) LIKE ?
+                OR EXISTS (
+                    SELECT 1
+                    FROM game_authors ga
+                    JOIN authors a ON a.id = ga.author_id
+                    WHERE ga.game_id = g.id AND LOWER(a.name) LIKE ?
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM game_editors ge
+                    JOIN editors e ON e.id = ge.editor_id
+                    WHERE ge.game_id = g.id AND LOWER(e.name) LIKE ?
+                )
+            )
+            """
+        )
+        parameters.extend([pattern, pattern, pattern])
+
+    if game_type and game_type.strip():
+        clauses.append("LOWER(g.type) = ?")
+        parameters.append(game_type.strip().lower())
+
+    if year and year.strip():
+        clauses.append("CAST(g.creation_year AS TEXT) LIKE ?")
+        parameters.append(f"%{year.strip()}%")
+
+    if not clauses:
+        return "", parameters
+
+    return f" WHERE {' AND '.join(clauses)}", parameters
+
+
 def _fetch_row(table: str, row_id: Any) -> dict[str, Any] | None:
     """Fetch a single row by its primary key."""
     with get_connection() as connection:
@@ -223,6 +269,38 @@ def get_games(skip: int = 0, limit: int = 100):
     game_rows = _fetch_paginated_rows("games", skip=skip, limit=limit)
     relations = _load_game_relations([row["id"] for row in game_rows])
     return [_serialize_game(row, relations) for row in game_rows]
+
+
+def get_games_page(
+    skip: int = 0,
+    limit: int = 100,
+    search: str | None = None,
+    game_type: str | None = None,
+    year: str | None = None,
+):
+    """Return a paginated and filterable game page."""
+    where_clause, parameters = _build_game_filters(search=search, game_type=game_type, year=year)
+
+    with get_connection() as connection:
+        total = connection.execute(
+            f"SELECT COUNT(*) FROM games g{where_clause}",
+            tuple(parameters),
+        ).fetchone()[0]
+
+        game_rows = _rows_to_dicts(
+            connection.execute(
+                f"SELECT * FROM games g{where_clause} ORDER BY g.id DESC LIMIT ? OFFSET ?",
+                tuple([*parameters, limit, skip]),
+            ).fetchall()
+        )
+
+    relations = _load_game_relations([row["id"] for row in game_rows])
+    return {
+        "items": [_serialize_game(row, relations) for row in game_rows],
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+    }
 
 
 def get_game(game_id: int):

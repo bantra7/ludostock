@@ -23,6 +23,20 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+export async function requestAllPages<T>(path: string, pageSize = 500): Promise<T[]> {
+  const items: T[] = [];
+
+  for (let skip = 0; ; skip += pageSize) {
+    const separator = path.includes("?") ? "&" : "?";
+    const page = await request<T[]>(`${path}${separator}skip=${skip}&limit=${pageSize}`);
+    items.push(...page);
+
+    if (page.length < pageSize) {
+      return items;
+    }
+  }
+}
+
 export function getApiBaseUrl() {
   return API_BASE_URL;
 }

@@ -1,7 +1,9 @@
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import re
 from typing import Any, Dict, List, Optional
+import unicodedata
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import pandas as pd
@@ -12,10 +14,23 @@ from loguru import logger
 NB_PAGES = 1060
 TRICTRAC_URL = "https://trictrac.net/jeux"
 BROKEN_URLS: List[str] = []
-BROKEN_URLS_FILE = "broken_urls.txt"
-FILENAME = "trictrac_data_games.csv"
+BROKEN_URLS_FILE = "data/raw/broken_urls.txt"
+FILENAME = "data/raw/trictac_data_games.csv"
 REQUEST_TIMEOUT = 15
 DEFAULT_MAX_WORKERS = 10
+CONTRIBUTOR_LABELS = {
+    "auteur": "Auteurs",
+    "auteurs": "Auteurs",
+    "auteurs_autrices": "Auteurs",
+    "artiste": "Artistes",
+    "artistes": "Artistes",
+    "illustrateur": "Artistes",
+    "illustrateurs": "Artistes",
+    "editeur": "Editeurs",
+    "editeurs": "Editeurs",
+    "distributeur": "Distributeurs",
+    "distributeurs": "Distributeurs",
+}
 
 # Configuration du logger
 LOGGER_LEVEL = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
@@ -108,6 +123,16 @@ def extraire_texte(element: Optional[BeautifulSoup]) -> Optional[str]:
     return texte or None
 
 
+def normaliser_libelle(label: str) -> str:
+    """Normalise un libelle HTML pour le convertir en cle CSV stable."""
+    sans_accents = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", label)
+        if not unicodedata.combining(character)
+    )
+    return re.sub(r"[^a-z0-9]+", "_", sans_accents.lower()).strip("_")
+
+
 def extraire_infos_trictrac(url: str) -> Optional[Dict[str, Any]]:
     """
     Extrait les informations d'un jeu a partir de son URL TricTrac.
@@ -131,6 +156,10 @@ def extraire_infos_trictrac(url: str) -> Optional[Dict[str, Any]]:
     infos: Dict[str, Any] = {
         "Url": url,
         "Nom": nom,
+        "Auteurs": "",
+        "Artistes": "",
+        "Editeurs": "",
+        "Distributeurs": "",
     }
 
     bloc = soup.select_one("h4.style_specsSubTitle__rfo9t")
@@ -165,7 +194,7 @@ def extraire_infos_trictrac(url: str) -> Optional[Dict[str, Any]]:
         titre = bloc_contributeur.get("title", "").strip()
         noms = [a.get_text(strip=True) for a in bloc_contributeur.select("a") if a.get_text(strip=True)]
         if titre and noms:
-            infos[titre] = " / ".join(noms)
+            infos[CONTRIBUTOR_LABELS.get(normaliser_libelle(titre), titre)] = " / ".join(noms)
 
     img = soup.select_one("img[itemprop='image']")
     src = img.get("src", "") if img else ""

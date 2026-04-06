@@ -25,8 +25,8 @@ To run the frontend and backend applications using Docker Compose, ensure you ha
     This command will build the Docker images for both the frontend and backend (if they don't exist or if changes were made) and then start the containers.
 
 3.  **Access the applications:**
-    *   Frontend: Open your web browser and go to [http://localhost:3000](http://localhost:3000)
-    *   Backend API: The backend will be accessible at [http://localhost:8080](http://localhost:8080)
+    *   Frontend: Open your web browser and go to [http://localhost:80](http://localhost:80)
+    *   Backend API: The backend will be accessible at [http://localhost:8081](http://localhost:8081)
 
 4.  **To stop the services:**
     Press `Ctrl+C` in the terminal where `docker-compose up` is running.

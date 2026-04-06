@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from typing import List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import crud, schemas
@@ -34,10 +34,22 @@ def create_game(game: schemas.GameCreate):
     return crud.create_game(game=game)
 
 
-@app.get("/api/games/", response_model=List[schemas.Game], tags=["Games"])
-def get_games(skip: int = 0, limit: int = 100):
-    """List games."""
-    return crud.get_games(skip=skip, limit=limit)
+@app.get("/api/games/", response_model=schemas.GamePage, tags=["Games"])
+def get_games(
+    skip: int = 0,
+    limit: int = Query(default=100, ge=1, le=500),
+    search: str | None = None,
+    game_type: str | None = Query(default=None, alias="type"),
+    year: str | None = None,
+):
+    """List games with pagination and optional filters."""
+    return crud.get_games_page(
+        skip=skip,
+        limit=limit,
+        search=search,
+        game_type=game_type,
+        year=year,
+    )
 
 
 @app.get("/api/games/{game_id}", response_model=schemas.Game, tags=["Games"])

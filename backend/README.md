@@ -32,15 +32,18 @@ Au demarrage, l'application cree automatiquement le fichier SQLite et ses tables
 ## Importer un CSV de jeux
 
 ```powershell
-$env:ENV_PATH="backend/app/.env"
-python -m backend.app.import_games --csv-path data/raw/trictac_data_games.csv
+.\.venv\Scripts\python.exe import_data.py --csv-path data/raw/trictac_data_games.csv --db-path backend/app/ludostock.db --force
 ```
 
 Le script :
 
 - convertit les colonnes du CSV ;
 - cree les jeux et les relations auteurs/artistes/editeurs/distributeurs ;
-- ecrit dans la base SQLite configuree.
+- tente de relier les extensions a leur jeu parent quand cela peut etre deduit proprement ;
+- ecrit dans la base SQLite cible.
+
+Le CSV enrichi `data/raw/trictac_data_games.csv` contient deja les colonnes `Auteurs`, `Artistes`, `Editeurs` et `Distributeurs`, donc il peut etre importe directement.
+Le CSV historique `data/raw/trictac_data.csv` ne contient pas ces colonnes ; si tu l'utilises, il faudra completer ces relations par un autre moyen avant d'obtenir une base complete.
 
 ## Exemple d'environnement
 

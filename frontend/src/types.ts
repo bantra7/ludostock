@@ -24,6 +24,13 @@ export type Game = {
   distributors: NamedEntity[];
 };
 
+export type GamePage = {
+  items: Game[];
+  total: number;
+  skip: number;
+  limit: number;
+};
+
 export type GameFormState = {
   name: string;
   type: string;
