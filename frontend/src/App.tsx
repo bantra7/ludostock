@@ -14,6 +14,7 @@ import type {
 const DEFAULT_GAME_PAGE_SIZE = 50;
 const REFERENCE_PAGE_SIZE = 25;
 const GAME_PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
+const FRONTEND_VERSION = __APP_VERSION__;
 const GAME_SORT_OPTIONS = [
   { value: "name:asc", label: "Nom (A-Z)", sortBy: "name", sortDir: "asc" },
   { value: "name:desc", label: "Nom (Z-A)", sortBy: "name", sortDir: "desc" },
@@ -239,7 +240,7 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark" />
+          <img className="brand-mark" src="/ludostock-logo.svg" alt="" aria-hidden="true" />
           <div>
             <p className="brand-title">Ludostock</p>
           </div>
@@ -305,6 +306,10 @@ function App() {
             onSelectReference={(kind) => void toggleReference(kind)}
           />
         ) : null}
+
+        <footer className="app-footer panel" aria-label="Version de l'application">
+          <span>Version {FRONTEND_VERSION}</span>
+        </footer>
       </main>
     </div>
   );
@@ -353,6 +358,7 @@ function GamesSection(props: {
     <section className="games-layout">
       <section className="panel games-search">
         <label className="games-search-field">
+          <span>Recherche</span>
           <input
             aria-label="Rechercher un jeu"
             value={search}

@@ -1,10 +1,12 @@
 services:
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "8081:8081"
     environment:
-      - ENV_PATH=/app/app/.env
+      - ENV_PATH=/app/backend/app/.env
       - PORT=8081
       - SQLITE_PATH=/workspace/ludostock.db
       - ALLOW_ORIGINS=http://localhost,http://localhost:80,http://127.0.0.1,http://127.0.0.1:80
@@ -12,7 +14,9 @@ services:
       - ./ludostock.db:/workspace/ludostock.db
 
   frontend:
-    build: ./frontend
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
     ports:
       - "80:80"
     depends_on:

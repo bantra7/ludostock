@@ -119,6 +119,13 @@ class GamePage(OrmSchema):
     limit: int
 
 
+class VersionInfo(OrmSchema):
+    """Application version metadata."""
+
+    name: str
+    version: str
+
+
 class UserBase(OrmSchema):
     """Shared user fields."""
 

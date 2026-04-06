@@ -6,7 +6,7 @@ from typing import List, Literal
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import crud, schemas
+from . import __version__, crud, schemas
 from .config import ALLOW_ORIGINS
 from .database import init_db
 
@@ -26,6 +26,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/api/meta/version/", response_model=schemas.VersionInfo, tags=["Meta"])
+def get_version():
+    """Expose backend version metadata for clients."""
+    return {"name": "backend", "version": __version__}
 
 
 @app.post("/api/games/", response_model=schemas.Game, tags=["Games"])

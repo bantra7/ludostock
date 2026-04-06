@@ -5,6 +5,7 @@ def test_app_registers_game_routes():
     paths = {route.path for route in main.app.routes}
 
     assert "/api/games/" in paths
+    assert "/api/meta/version/" in paths
     assert "/api/users/" in paths
     assert "/api/collections/" in paths
 
@@ -38,3 +39,9 @@ def test_get_games_delegates_to_paginated_crud(monkeypatch):
         "sort_by": "authors",
         "sort_dir": "desc",
     }
+
+
+def test_get_version_returns_backend_metadata():
+    response = main.get_version()
+
+    assert response == {"name": "backend", "version": main.__version__}
