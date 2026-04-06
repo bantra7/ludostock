@@ -2,7 +2,7 @@
 
 import sqlite3
 from collections import defaultdict
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
@@ -17,6 +17,9 @@ GAME_RELATIONS = {
     "editors": ("editors", "game_editors", "editor_id"),
     "distributors": ("distributors", "game_distributors", "distributor_id"),
 }
+
+GameSortField = Literal["name", "type", "creation_year", "players", "duration_minutes", "authors", "editors"]
+GameSortDirection = Literal["asc", "desc"]
 
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -62,26 +65,8 @@ def _build_game_filters(
 
     if search and search.strip():
         pattern = f"%{search.strip().lower()}%"
-        clauses.append(
-            """
-            (
-                LOWER(g.name) LIKE ?
-                OR EXISTS (
-                    SELECT 1
-                    FROM game_authors ga
-                    JOIN authors a ON a.id = ga.author_id
-                    WHERE ga.game_id = g.id AND LOWER(a.name) LIKE ?
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM game_editors ge
-                    JOIN editors e ON e.id = ge.editor_id
-                    WHERE ge.game_id = g.id AND LOWER(e.name) LIKE ?
-                )
-            )
-            """
-        )
-        parameters.extend([pattern, pattern, pattern])
+        clauses.append("LOWER(g.name) LIKE ?")
+        parameters.append(pattern)
 
     if game_type and game_type.strip():
         clauses.append("LOWER(g.type) = ?")
@@ -95,6 +80,50 @@ def _build_game_filters(
         return "", parameters
 
     return f" WHERE {' AND '.join(clauses)}", parameters
+
+
+def _build_game_order(sort_by: GameSortField = "name", sort_dir: GameSortDirection = "asc") -> str:
+    """Build a safe SQL ORDER BY clause for game pages."""
+    direction = "DESC" if sort_dir == "desc" else "ASC"
+    author_sort = (
+        "COALESCE(("
+        "SELECT MIN(LOWER(a.name)) "
+        "FROM game_authors ga "
+        "JOIN authors a ON a.id = ga.author_id "
+        "WHERE ga.game_id = g.id"
+        "), '')"
+    )
+    editor_sort = (
+        "COALESCE(("
+        "SELECT MIN(LOWER(e.name)) "
+        "FROM game_editors ge "
+        "JOIN editors e ON e.id = ge.editor_id "
+        "WHERE ge.game_id = g.id"
+        "), '')"
+    )
+
+    if sort_by == "name":
+        return f"LOWER(g.name) {direction}, g.id DESC"
+
+    if sort_by == "type":
+        return f"LOWER(g.type) {direction}, LOWER(g.name) ASC, g.id DESC"
+
+    if sort_by == "creation_year":
+        return f"(g.creation_year IS NULL) ASC, g.creation_year {direction}, LOWER(g.name) ASC, g.id DESC"
+
+    if sort_by == "players":
+        return (
+            f"(g.min_players IS NULL) ASC, g.min_players {direction}, "
+            f"(g.max_players IS NULL) ASC, g.max_players {direction}, LOWER(g.name) ASC, g.id DESC"
+        )
+
+    if sort_by == "duration_minutes":
+        return f"(g.duration_minutes IS NULL) ASC, g.duration_minutes {direction}, LOWER(g.name) ASC, g.id DESC"
+
+    if sort_by == "authors":
+        return f"{author_sort} {direction}, LOWER(g.name) ASC, g.id DESC"
+
+    return f"{editor_sort} {direction}, LOWER(g.name) ASC, g.id DESC"
 
 
 def _fetch_row(table: str, row_id: Any) -> dict[str, Any] | None:
@@ -277,9 +306,12 @@ def get_games_page(
     search: str | None = None,
     game_type: str | None = None,
     year: str | None = None,
+    sort_by: GameSortField = "name",
+    sort_dir: GameSortDirection = "asc",
 ):
     """Return a paginated and filterable game page."""
     where_clause, parameters = _build_game_filters(search=search, game_type=game_type, year=year)
+    order_clause = _build_game_order(sort_by=sort_by, sort_dir=sort_dir)
 
     with get_connection() as connection:
         total = connection.execute(
@@ -289,7 +321,7 @@ def get_games_page(
 
         game_rows = _rows_to_dicts(
             connection.execute(
-                f"SELECT * FROM games g{where_clause} ORDER BY g.id DESC LIMIT ? OFFSET ?",
+                f"SELECT * FROM games g{where_clause} ORDER BY {order_clause} LIMIT ? OFFSET ?",
                 tuple([*parameters, limit, skip]),
             ).fetchall()
         )

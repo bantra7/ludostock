@@ -11,8 +11,27 @@ import type {
   ReferenceKey,
 } from "./types";
 
-const GAME_PAGE_SIZE = 50;
+const DEFAULT_GAME_PAGE_SIZE = 50;
 const REFERENCE_PAGE_SIZE = 25;
+const GAME_PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
+const GAME_SORT_OPTIONS = [
+  { value: "name:asc", label: "Nom (A-Z)", sortBy: "name", sortDir: "asc" },
+  { value: "name:desc", label: "Nom (Z-A)", sortBy: "name", sortDir: "desc" },
+  { value: "type:asc", label: "Type (A-Z)", sortBy: "type", sortDir: "asc" },
+  { value: "type:desc", label: "Type (Z-A)", sortBy: "type", sortDir: "desc" },
+  { value: "creation_year:asc", label: "Annee (croissante)", sortBy: "creation_year", sortDir: "asc" },
+  { value: "creation_year:desc", label: "Annee (decroissante)", sortBy: "creation_year", sortDir: "desc" },
+  { value: "players:asc", label: "Joueurs (croissant)", sortBy: "players", sortDir: "asc" },
+  { value: "players:desc", label: "Joueurs (decroissant)", sortBy: "players", sortDir: "desc" },
+  { value: "duration_minutes:asc", label: "Duree (croissante)", sortBy: "duration_minutes", sortDir: "asc" },
+  { value: "duration_minutes:desc", label: "Duree (decroissante)", sortBy: "duration_minutes", sortDir: "desc" },
+  { value: "authors:asc", label: "Auteurs (A-Z)", sortBy: "authors", sortDir: "asc" },
+  { value: "authors:desc", label: "Auteurs (Z-A)", sortBy: "authors", sortDir: "desc" },
+  { value: "editors:asc", label: "Editeurs (A-Z)", sortBy: "editors", sortDir: "asc" },
+  { value: "editors:desc", label: "Editeurs (Z-A)", sortBy: "editors", sortDir: "desc" },
+] as const;
+
+type GameSortValue = (typeof GAME_SORT_OPTIONS)[number]["value"];
 
 function createReferenceNumberMap(initialValue: number) {
   return {
@@ -56,27 +75,20 @@ function App() {
   const [referenceLoading, setReferenceLoading] = useState(() => createReferenceBooleanMap(false));
   const [referenceLoaded, setReferenceLoaded] = useState(() => createReferenceBooleanMap(false));
   const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState("");
-  const [yearFilter, setYearFilter] = useState("");
-  const [playerFilter, setPlayerFilter] = useState("all");
-  const [durationFilter, setDurationFilter] = useState("all");
-  const [authorFilter, setAuthorFilter] = useState("");
-  const [artistFilter, setArtistFilter] = useState("");
-  const [editorFilter, setEditorFilter] = useState("");
-  const [distributorFilter, setDistributorFilter] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [gamePageSize, setGamePageSize] = useState<number>(DEFAULT_GAME_PAGE_SIZE);
+  const [gameSort, setGameSort] = useState<GameSortValue>("name:asc");
   const [gamesRefreshToken, setGamesRefreshToken] = useState(0);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const deferredSearch = useDeferredValue(search);
-  const deferredYearFilter = useDeferredValue(yearFilter);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [deferredSearch, typeFilter, deferredYearFilter]);
+  }, [deferredSearch, gamePageSize, gameSort]);
 
   useEffect(() => {
     void loadGamesPage(currentPage);
-  }, [currentPage, deferredSearch, typeFilter, deferredYearFilter, gamesRefreshToken]);
+  }, [currentPage, deferredSearch, gamePageSize, gameSort, gamesRefreshToken]);
 
   useEffect(() => {
     if (!hasLoadedOnce && !isGamesLoading) {
@@ -87,26 +99,21 @@ function App() {
   async function loadGamesPage(pageNumber: number) {
     setIsGamesLoading(true);
     try {
+      const activeSort = getGameSortOption(gameSort);
       const params = new URLSearchParams({
-        skip: String((pageNumber - 1) * GAME_PAGE_SIZE),
-        limit: String(GAME_PAGE_SIZE),
+        skip: String((pageNumber - 1) * gamePageSize),
+        limit: String(gamePageSize),
+        sort_by: activeSort.sortBy,
+        sort_dir: activeSort.sortDir,
       });
 
       if (deferredSearch.trim()) {
         params.set("search", deferredSearch.trim());
       }
 
-      if (typeFilter.trim()) {
-        params.set("type", typeFilter.trim());
-      }
-
-      if (deferredYearFilter.trim()) {
-        params.set("year", deferredYearFilter.trim());
-      }
-
       const page = await request<GamePage>(`/games/?${params.toString()}`);
       if (page.items.length === 0 && page.total > 0 && page.skip >= page.total) {
-        setCurrentPage(Math.max(1, Math.ceil(page.total / GAME_PAGE_SIZE)));
+        setCurrentPage(Math.max(1, Math.ceil(page.total / gamePageSize)));
         return;
       }
 
@@ -224,10 +231,10 @@ function App() {
     }
   }
 
-  const availableTypes = Array.from(new Set([...games.map((game) => game.type), typeFilter].filter(Boolean))).sort();
-  const totalPages = Math.max(1, Math.ceil(totalGames / GAME_PAGE_SIZE));
-  const pageStart = totalGames === 0 ? 0 : (currentPage - 1) * GAME_PAGE_SIZE + 1;
-  const pageEnd = totalGames === 0 ? 0 : Math.min(currentPage * GAME_PAGE_SIZE, totalGames);
+  const totalPages = Math.max(1, Math.ceil(totalGames / gamePageSize));
+  const pageStart = totalGames === 0 ? 0 : (currentPage - 1) * gamePageSize + 1;
+  const pageEnd = totalGames === 0 ? 0 : Math.min(currentPage * gamePageSize, totalGames);
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -264,46 +271,21 @@ function App() {
 
         {hasLoadedOnce && activeNav === "games" ? (
           <GamesSection
-            availableTypes={availableTypes}
-            artistFilter={artistFilter}
-            authorFilter={authorFilter}
             currentPage={currentPage}
-            distributorFilter={distributorFilter}
-            durationFilter={durationFilter}
-            editorFilter={editorFilter}
             games={games}
             isGamesLoading={isGamesLoading}
             pageEnd={pageEnd}
+            pageSize={gamePageSize}
             pageStart={pageStart}
-            playerFilter={playerFilter}
             search={search}
+            sortValue={gameSort}
             totalGames={totalGames}
             totalPages={totalPages}
-            typeFilter={typeFilter}
-            yearFilter={yearFilter}
-            onArtistFilterChange={setArtistFilter}
-            onAuthorFilterChange={setAuthorFilter}
             onDeleteGame={deleteGame}
-            onDistributorFilterChange={setDistributorFilter}
             onPageChange={setCurrentPage}
-            onDurationFilterChange={setDurationFilter}
-            onEditorFilterChange={setEditorFilter}
+            onPageSizeChange={setGamePageSize}
             onSearchChange={setSearch}
-            onPlayerFilterChange={setPlayerFilter}
-            onResetFilters={() => {
-              setSearch("");
-              setTypeFilter("");
-              setYearFilter("");
-              setPlayerFilter("all");
-              setDurationFilter("all");
-              setAuthorFilter("");
-              setArtistFilter("");
-              setEditorFilter("");
-              setDistributorFilter("");
-              setCurrentPage(1);
-            }}
-            onTypeFilterChange={setTypeFilter}
-            onYearFilterChange={setYearFilter}
+            onSortChange={setGameSort}
           />
         ) : null}
 
@@ -329,251 +311,77 @@ function App() {
 }
 
 function GamesSection(props: {
-  availableTypes: string[];
-  artistFilter: string;
-  authorFilter: string;
   currentPage: number;
-  distributorFilter: string;
-  durationFilter: string;
-  editorFilter: string;
   games: Game[];
   isGamesLoading: boolean;
   pageEnd: number;
+  pageSize: number;
   pageStart: number;
-  playerFilter: string;
   search: string;
+  sortValue: GameSortValue;
   totalGames: number;
   totalPages: number;
-  typeFilter: string;
-  yearFilter: string;
-  onArtistFilterChange: (value: string) => void;
-  onAuthorFilterChange: (value: string) => void;
   onDeleteGame: (gameId: number) => void;
-  onDistributorFilterChange: (value: string) => void;
-  onDurationFilterChange: (value: string) => void;
-  onEditorFilterChange: (value: string) => void;
   onPageChange: (page: number) => void;
-  onPlayerFilterChange: (value: string) => void;
-  onResetFilters: () => void;
+  onPageSizeChange: (value: number) => void;
   onSearchChange: (value: string) => void;
-  onTypeFilterChange: (value: string) => void;
-  onYearFilterChange: (value: string) => void;
+  onSortChange: (value: GameSortValue) => void;
 }) {
   const [hoveredGameId, setHoveredGameId] = useState<number | null>(null);
   const {
-    availableTypes,
-    artistFilter,
-    authorFilter,
     currentPage,
-    distributorFilter,
-    durationFilter,
-    editorFilter,
     games,
     isGamesLoading,
     pageEnd,
+    pageSize,
     pageStart,
-    playerFilter,
     search,
+    sortValue,
     totalGames,
     totalPages,
-    typeFilter,
-    yearFilter,
-    onArtistFilterChange,
-    onAuthorFilterChange,
     onDeleteGame,
-    onDistributorFilterChange,
-    onDurationFilterChange,
-    onEditorFilterChange,
     onPageChange,
-    onPlayerFilterChange,
-    onResetFilters,
+    onPageSizeChange,
     onSearchChange,
-    onTypeFilterChange,
-    onYearFilterChange,
+    onSortChange,
   } = props;
-  const filteredGames = games.filter((game) => {
-    if (!matchesPlayerFilter(game, playerFilter)) {
-      return false;
-    }
-    if (!matchesDurationFilter(game, durationFilter)) {
-      return false;
-    }
-    if (!matchesOccurrenceFilter(game.authors, authorFilter)) {
-      return false;
-    }
-    if (!matchesOccurrenceFilter(game.artists, artistFilter)) {
-      return false;
-    }
-    if (!matchesOccurrenceFilter(game.editors, editorFilter)) {
-      return false;
-    }
-    if (!matchesOccurrenceFilter(game.distributors, distributorFilter)) {
-      return false;
-    }
-    return true;
-  });
-  const visibleCount = filteredGames.length;
-  const loadedCount = games.length;
-  const hasAdvancedFilters =
-    playerFilter !== "all" ||
-    durationFilter !== "all" ||
-    Boolean(authorFilter.trim()) ||
-    Boolean(artistFilter.trim()) ||
-    Boolean(editorFilter.trim()) ||
-    Boolean(distributorFilter.trim());
+  const paginationItems = buildPaginationItems(currentPage, totalPages);
+  const resultLabel =
+    totalGames === 0 ? "Aucun resultat" : `${pageStart}-${pageEnd} sur ${totalGames}`;
 
   return (
     <section className="games-layout">
-      <section className="games-main">
-        <section className="games-toolbar panel">
-          <div className="section-intro">
-            <h2>Jeux</h2>
-            <p>Liste paginee du catalogue avec filtres serveur puis filtres rapides sur la page chargee.</p>
+      <section className="panel games-search">
+        <label className="games-search-field">
+          <input
+            aria-label="Rechercher un jeu"
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Nom du jeu"
+          />
+        </label>
+      </section>
+
+      <section className="panel games-content">
+        <div className="games-controls">
+          <div className="games-results-copy" aria-live="polite">
+            <strong>{totalGames}</strong>
+            <span>{totalGames > 1 ? "jeux dans le catalogue" : "jeu dans le catalogue"}</span>
           </div>
 
-          <div className="games-summary">
-            <div className="summary-pill">
-              <strong>{visibleCount}</strong>
-              <span>visibles</span>
-            </div>
-            <div className="summary-pill">
-              <strong>{loadedCount}</strong>
-              <span>charges</span>
-            </div>
-            <div className="summary-pill">
-              <strong>{totalGames}</strong>
-              <span>resultats</span>
-            </div>
-          </div>
-        </section>
-
-        <section className="filter-bar panel">
-          <label className="field">
-            <span>Recherche serveur</span>
-            <input value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Nom, auteur ou editeur" />
-          </label>
-
-          <label className="field">
-            <span>Type</span>
-            <select value={typeFilter} onChange={(event) => onTypeFilterChange(event.target.value)}>
-              <option value="">Tous</option>
-              {availableTypes.map((type) => (
-                <option key={type} value={type}>
-                  {type}
+          <label className="games-inline-control">
+            <span>Trier la liste</span>
+            <select value={sortValue} onChange={(event) => onSortChange(event.target.value as GameSortValue)}>
+              {GAME_SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
             </select>
           </label>
+        </div>
 
-          <label className="field field-small">
-            <span>Annee</span>
-            <input value={yearFilter} onChange={(event) => onYearFilterChange(event.target.value)} placeholder="1995" />
-          </label>
-
-          <label className="field">
-            <span>Joueurs</span>
-            <select value={playerFilter} onChange={(event) => onPlayerFilterChange(event.target.value)}>
-              <option value="all">Tous</option>
-              <option value="solo">Solo possible</option>
-              <option value="duo">Jouable a 2</option>
-              <option value="group">Jouable a 4+</option>
-              <option value="party">Grand groupe 6+</option>
-            </select>
-          </label>
-
-          <label className="field">
-            <span>Duree</span>
-            <select value={durationFilter} onChange={(event) => onDurationFilterChange(event.target.value)}>
-              <option value="all">Toutes</option>
-              <option value="short">30 min ou moins</option>
-              <option value="medium">31 a 60 min</option>
-              <option value="long">61 a 120 min</option>
-              <option value="epic">Plus de 120 min</option>
-              <option value="unknown">Non renseignee</option>
-            </select>
-          </label>
-
-          <label className="field">
-            <span>Auteur contient</span>
-            <input
-              value={authorFilter}
-              onChange={(event) => onAuthorFilterChange(event.target.value)}
-              placeholder="Knizia"
-            />
-          </label>
-
-          <label className="field">
-            <span>Artiste contient</span>
-            <input
-              value={artistFilter}
-              onChange={(event) => onArtistFilterChange(event.target.value)}
-              placeholder="Mujunsha"
-            />
-          </label>
-
-          <label className="field">
-            <span>Editeur contient</span>
-            <input
-              value={editorFilter}
-              onChange={(event) => onEditorFilterChange(event.target.value)}
-              placeholder="Asmodee"
-            />
-          </label>
-
-          <label className="field">
-            <span>Distributeur contient</span>
-            <input
-              value={distributorFilter}
-              onChange={(event) => onDistributorFilterChange(event.target.value)}
-              placeholder="Pixie"
-            />
-          </label>
-
-          <div className="filter-actions">
-            <button type="button" className="secondary-button" onClick={onResetFilters}>
-              Reinitialiser
-            </button>
-          </div>
-        </section>
-
-        <section className="panel panel-form">
-          <div className="section-intro compact">
-            <h2>
-              {totalGames === 0
-                ? "Aucun resultat"
-                : `${pageStart}-${pageEnd} sur ${totalGames}`}
-            </h2>
-            <p>
-              {hasAdvancedFilters
-                ? `${visibleCount} jeux correspondent aux filtres rapides sur cette page.`
-                : "Tous les jeux charges sur cette page sont affiches."}
-            </p>
-          </div>
-
-          <div className="form-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={currentPage <= 1 || isGamesLoading}
-              onClick={() => onPageChange(currentPage - 1)}
-            >
-              Page precedente
-            </button>
-            <span>
-              Page {currentPage} / {totalPages}
-            </span>
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={currentPage >= totalPages || isGamesLoading}
-              onClick={() => onPageChange(currentPage + 1)}
-            >
-              Page suivante
-            </button>
-          </div>
-        </section>
-
-        <section className="panel panel-table">
+        <div className="table-shell">
           <div className="table-head">
             <div>Nom</div>
             <div>Type</div>
@@ -589,17 +397,15 @@ function GamesSection(props: {
             {isGamesLoading ? (
               <div className="empty-state">
                 <h3>Chargement</h3>
+                <p>Mise a jour de la page en cours.</p>
               </div>
             ) : games.length === 0 ? (
               <div className="empty-state">
                 <h3>Aucun jeu</h3>
-              </div>
-            ) : filteredGames.length === 0 ? (
-              <div className="empty-state">
-                <h3>Aucun jeu ne correspond aux filtres rapides</h3>
+                <p>Aucun jeu ne correspond a cette recherche.</p>
               </div>
             ) : (
-              filteredGames.map((game) => (
+              games.map((game) => (
                 <div key={game.id} className="table-row">
                   <div
                     className="table-name-cell"
@@ -622,12 +428,12 @@ function GamesSection(props: {
                     )}
                     <GameHoverCard game={game} isVisible={hoveredGameId === game.id} />
                   </div>
-                  <div>{game.type}</div>
+                  <div>{game.type || "-"}</div>
                   <div>{game.creation_year ?? "-"}</div>
                   <div>{formatPlayers(game)}</div>
                   <div>{formatDuration(game.duration_minutes)}</div>
-                  <div>{joinNames(game.authors)}</div>
-                  <div>{joinNames(game.editors)}</div>
+                  <div>{joinNames(game.authors) || "-"}</div>
+                  <div>{joinNames(game.editors) || "-"}</div>
                   <div className="row-actions">
                     <button type="button" className="link-button danger" onClick={() => onDeleteGame(game.id)}>
                       Supprimer
@@ -637,7 +443,65 @@ function GamesSection(props: {
               ))
             )}
           </div>
-        </section>
+        </div>
+      </section>
+
+      <section className="panel games-footer">
+        <div className="games-footer-meta">
+          <strong>{resultLabel}</strong>
+          <span>{games.length} elements affiches sur cette page.</span>
+        </div>
+
+        <div className="games-pagination" aria-label="Pagination des jeux">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={currentPage <= 1 || isGamesLoading}
+            onClick={() => onPageChange(currentPage - 1)}
+          >
+            Precedente
+          </button>
+
+          <div className="games-pagination-pages">
+            {paginationItems.map((item) =>
+              typeof item === "number" ? (
+                <button
+                  key={item}
+                  type="button"
+                  className={`game-page-button ${item === currentPage ? "active" : ""}`}
+                  disabled={isGamesLoading}
+                  onClick={() => onPageChange(item)}
+                >
+                  {item}
+                </button>
+              ) : (
+                <span key={item} className="pagination-ellipsis" aria-hidden="true">
+                  ...
+                </span>
+              ),
+            )}
+          </div>
+
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={currentPage >= totalPages || isGamesLoading}
+            onClick={() => onPageChange(currentPage + 1)}
+          >
+            Suivante
+          </button>
+        </div>
+
+        <label className="games-inline-control games-inline-control-compact">
+          <span>Par page</span>
+          <select value={String(pageSize)} onChange={(event) => onPageSizeChange(Number(event.target.value))}>
+            {GAME_PAGE_SIZE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
       </section>
     </section>
   );
@@ -844,68 +708,28 @@ function formatDuration(duration: number | null) {
   return duration ? `${duration} min` : "-";
 }
 
-function matchesPlayerFilter(game: Game, filter: string) {
-  if (filter === "all") {
-    return true;
-  }
-
-  if (filter === "solo") {
-    return game.min_players !== null && game.min_players <= 1;
-  }
-
-  if (filter === "duo") {
-    return game.min_players !== null && game.max_players !== null && game.min_players <= 2 && game.max_players >= 2;
-  }
-
-  if (filter === "group") {
-    return game.max_players !== null && game.max_players >= 4;
-  }
-
-  if (filter === "party") {
-    return game.max_players !== null && game.max_players >= 6;
-  }
-
-  return true;
+function getGameSortOption(value: GameSortValue) {
+  return GAME_SORT_OPTIONS.find((option) => option.value === value) ?? GAME_SORT_OPTIONS[0];
 }
 
-function matchesDurationFilter(game: Game, filter: string) {
-  if (filter === "all") {
-    return true;
-  }
+function buildPaginationItems(currentPage: number, totalPages: number) {
+  const candidates = new Set([1, currentPage - 1, currentPage, currentPage + 1, totalPages]);
+  const pages = Array.from(candidates)
+    .filter((page) => page >= 1 && page <= totalPages)
+    .sort((left, right) => left - right);
 
-  if (filter === "unknown") {
-    return game.duration_minutes === null;
-  }
+  const items: Array<number | string> = [];
+  let previousPage = 0;
 
-  if (game.duration_minutes === null) {
-    return false;
-  }
+  pages.forEach((page) => {
+    if (previousPage && page - previousPage > 1) {
+      items.push(`ellipsis-${previousPage}-${page}`);
+    }
+    items.push(page);
+    previousPage = page;
+  });
 
-  if (filter === "short") {
-    return game.duration_minutes <= 30;
-  }
-
-  if (filter === "medium") {
-    return game.duration_minutes >= 31 && game.duration_minutes <= 60;
-  }
-
-  if (filter === "long") {
-    return game.duration_minutes >= 61 && game.duration_minutes <= 120;
-  }
-
-  if (filter === "epic") {
-    return game.duration_minutes > 120;
-  }
-
-  return true;
-}
-
-function matchesOccurrenceFilter(items: NamedEntity[], filter: string) {
-  const query = filter.trim().toLocaleLowerCase();
-  if (!query) {
-    return true;
-  }
-  return items.some((item) => item.name.toLocaleLowerCase().includes(query));
+  return items;
 }
 
 export default App;

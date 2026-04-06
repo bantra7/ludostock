@@ -60,7 +60,7 @@ def test_get_games_page_returns_total_and_requested_slice(sqlite_game_store):
     assert page["total"] == 3
     assert page["skip"] == 1
     assert page["limit"] == 1
-    assert [game["name"] for game in page["items"]] == ["Patchwork"]
+    assert [game["name"] for game in page["items"]] == ["Carcassonne"]
 
 
 def test_get_games_page_filters_by_search_type_and_year(sqlite_game_store):
@@ -95,10 +95,52 @@ def test_get_games_page_filters_by_search_type_and_year(sqlite_game_store):
     page = crud.get_games_page(
         skip=0,
         limit=10,
-        search="michael",
+        search="azul",
         game_type="Jeu",
         year="2017",
     )
 
     assert page["total"] == 1
     assert [game["name"] for game in page["items"]] == ["Azul"]
+
+
+def test_get_games_page_sorts_by_author_and_numeric_fields(sqlite_game_store):
+    crud.create_game(
+        schemas.GameCreate(
+            name="Cascadia",
+            type="jeu",
+            min_players=1,
+            max_players=4,
+            duration_minutes=45,
+            authors=["Randy Flynn"],
+            editors=["AEG"],
+        )
+    )
+    crud.create_game(
+        schemas.GameCreate(
+            name="Azul",
+            type="jeu",
+            min_players=2,
+            max_players=4,
+            duration_minutes=30,
+            authors=["Michael Kiesling"],
+            editors=["Next Move"],
+        )
+    )
+    crud.create_game(
+        schemas.GameCreate(
+            name="Patchwork",
+            type="jeu",
+            min_players=2,
+            max_players=2,
+            duration_minutes=15,
+            authors=["Uwe Rosenberg"],
+            editors=["Lookout Games"],
+        )
+    )
+
+    author_sorted_page = crud.get_games_page(skip=0, limit=10, sort_by="authors", sort_dir="desc")
+    duration_sorted_page = crud.get_games_page(skip=0, limit=10, sort_by="duration_minutes", sort_dir="asc")
+
+    assert [game["name"] for game in author_sorted_page["items"]] == ["Patchwork", "Cascadia", "Azul"]
+    assert [game["name"] for game in duration_sorted_page["items"]] == ["Patchwork", "Azul", "Cascadia"]

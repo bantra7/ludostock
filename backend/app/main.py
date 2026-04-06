@@ -1,7 +1,7 @@
 """FastAPI application entrypoint."""
 
 from contextlib import asynccontextmanager
-from typing import List
+from typing import List, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,6 +41,8 @@ def get_games(
     search: str | None = None,
     game_type: str | None = Query(default=None, alias="type"),
     year: str | None = None,
+    sort_by: Literal["name", "type", "creation_year", "players", "duration_minutes", "authors", "editors"] = "name",
+    sort_dir: Literal["asc", "desc"] = "asc",
 ):
     """List games with pagination and optional filters."""
     return crud.get_games_page(
@@ -49,6 +51,8 @@ def get_games(
         search=search,
         game_type=game_type,
         year=year,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
     )
 
 
