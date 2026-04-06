@@ -1,6 +1,6 @@
 import { FormEvent, useDeferredValue, useEffect, useState } from "react";
-import { getErrorMessage, joinNames, request, requestAllPages } from "./api";
-import { navItems, referenceEndpoints, referenceTitles } from "./types";
+import { getErrorMessage, joinNames, request } from "./api";
+import { navItems, referenceEndpoints, referenceNavItems, referenceTitles } from "./types";
 import type {
   Game,
   GamePage,
@@ -12,11 +12,30 @@ import type {
 } from "./types";
 
 const GAME_PAGE_SIZE = 50;
+const REFERENCE_PAGE_SIZE = 25;
+
+function createReferenceNumberMap(initialValue: number) {
+  return {
+    authors: initialValue,
+    artists: initialValue,
+    editors: initialValue,
+    distributors: initialValue,
+  };
+}
+
+function createReferenceBooleanMap(initialValue: boolean) {
+  return {
+    authors: initialValue,
+    artists: initialValue,
+    editors: initialValue,
+    distributors: initialValue,
+  };
+}
 
 function App() {
-  const [activeNav, setActiveNav] = useState<NavKey>("overview");
+  const [activeNav, setActiveNav] = useState<NavKey>("games");
+  const [activeReference, setActiveReference] = useState<ReferenceKey | null>(null);
   const [games, setGames] = useState<Game[]>([]);
-  const [catalogGameCount, setCatalogGameCount] = useState(0);
   const [totalGames, setTotalGames] = useState(0);
   const [references, setReferences] = useState<ReferenceCollection>({
     authors: [],
@@ -31,8 +50,11 @@ function App() {
     distributors: "",
   });
   const [isGamesLoading, setIsGamesLoading] = useState(true);
-  const [areReferencesLoading, setAreReferencesLoading] = useState(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const [referencePages, setReferencePages] = useState(() => createReferenceNumberMap(1));
+  const [referenceHasNext, setReferenceHasNext] = useState(() => createReferenceBooleanMap(false));
+  const [referenceLoading, setReferenceLoading] = useState(() => createReferenceBooleanMap(false));
+  const [referenceLoaded, setReferenceLoaded] = useState(() => createReferenceBooleanMap(false));
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [yearFilter, setYearFilter] = useState("");
@@ -49,10 +71,6 @@ function App() {
   const deferredYearFilter = useDeferredValue(yearFilter);
 
   useEffect(() => {
-    void loadReferenceData();
-  }, []);
-
-  useEffect(() => {
     setCurrentPage(1);
   }, [deferredSearch, typeFilter, deferredYearFilter]);
 
@@ -61,33 +79,10 @@ function App() {
   }, [currentPage, deferredSearch, typeFilter, deferredYearFilter, gamesRefreshToken]);
 
   useEffect(() => {
-    if (!hasLoadedOnce && !isGamesLoading && !areReferencesLoading) {
+    if (!hasLoadedOnce && !isGamesLoading) {
       setHasLoadedOnce(true);
     }
-  }, [areReferencesLoading, hasLoadedOnce, isGamesLoading]);
-
-  async function loadReferenceData() {
-    setAreReferencesLoading(true);
-    try {
-      const [authorsData, artistsData, editorsData, distributorsData] = await Promise.all([
-        requestAllPages<NamedEntity>("/authors/"),
-        requestAllPages<NamedEntity>("/artists/"),
-        requestAllPages<NamedEntity>("/editors/"),
-        requestAllPages<NamedEntity>("/distributors/"),
-      ]);
-
-      setReferences({
-        authors: authorsData,
-        artists: artistsData,
-        editors: editorsData,
-        distributors: distributorsData,
-      });
-    } catch (error) {
-      setMessage({ tone: "error", text: getErrorMessage(error) });
-    } finally {
-      setAreReferencesLoading(false);
-    }
-  }
+  }, [hasLoadedOnce, isGamesLoading]);
 
   async function loadGamesPage(pageNumber: number) {
     setIsGamesLoading(true);
@@ -117,9 +112,6 @@ function App() {
 
       setGames(page.items);
       setTotalGames(page.total);
-      if (!deferredSearch.trim() && !typeFilter.trim() && !deferredYearFilter.trim()) {
-        setCatalogGameCount(page.total);
-      }
     } catch (error) {
       setMessage({ tone: "error", text: getErrorMessage(error) });
     } finally {
@@ -136,15 +128,14 @@ function App() {
     }
 
     try {
-      const created = await request<NamedEntity>(`/${referenceEndpoints[kind]}/`, {
+      await request<NamedEntity>(`/${referenceEndpoints[kind]}/`, {
         method: "POST",
         body: JSON.stringify({ name }),
       });
-      setReferences((current) => ({
-        ...current,
-        [kind]: [...current[kind], created].sort((left, right) => left.name.localeCompare(right.name)),
-      }));
       setReferenceDrafts((current) => ({ ...current, [kind]: "" }));
+      if (referenceLoaded[kind]) {
+        await loadReferencePage(kind, referencePages[kind]);
+      }
       setMessage({ tone: "success", text: `${referenceTitles[kind].slice(0, -1)} cree avec succes.` });
     } catch (error) {
       setMessage({ tone: "error", text: getErrorMessage(error) });
@@ -163,16 +154,15 @@ function App() {
 
     try {
       await request(`/${referenceEndpoints[kind]}/${id}`, { method: "DELETE" });
-      setReferences((current) => ({
-        ...current,
-        [kind]: current[kind].filter((entry) => entry.id !== id),
-      }));
       setGames((current) =>
         current.map((game) => ({
           ...game,
           [kind]: game[kind].filter((entry) => entry.id !== id),
         })),
       );
+      const nextPage =
+        references[kind].length === 1 && referencePages[kind] > 1 ? referencePages[kind] - 1 : referencePages[kind];
+      await loadReferencePage(kind, nextPage);
       setMessage({ tone: "success", text: `${item.name} a ete supprime.` });
     } catch (error) {
       setMessage({ tone: "error", text: getErrorMessage(error) });
@@ -198,11 +188,46 @@ function App() {
     }
   }
 
+  async function loadReferencePage(kind: ReferenceKey, pageNumber: number) {
+    setReferenceLoading((current) => ({ ...current, [kind]: true }));
+    try {
+      const params = new URLSearchParams({
+        skip: String((pageNumber - 1) * REFERENCE_PAGE_SIZE),
+        limit: String(REFERENCE_PAGE_SIZE + 1),
+      });
+      const items = await request<NamedEntity[]>(`/${referenceEndpoints[kind]}/?${params.toString()}`);
+      const hasNextPage = items.length > REFERENCE_PAGE_SIZE;
+
+      setReferences((current) => ({
+        ...current,
+        [kind]: items.slice(0, REFERENCE_PAGE_SIZE),
+      }));
+      setReferencePages((current) => ({ ...current, [kind]: pageNumber }));
+      setReferenceHasNext((current) => ({ ...current, [kind]: hasNextPage }));
+      setReferenceLoaded((current) => ({ ...current, [kind]: true }));
+    } catch (error) {
+      setMessage({ tone: "error", text: getErrorMessage(error) });
+    } finally {
+      setReferenceLoading((current) => ({ ...current, [kind]: false }));
+    }
+  }
+
+  async function toggleReference(kind: ReferenceKey) {
+    if (activeReference === kind) {
+      setActiveReference(null);
+      return;
+    }
+
+    setActiveReference(kind);
+    if (!referenceLoaded[kind]) {
+      await loadReferencePage(kind, 1);
+    }
+  }
+
   const availableTypes = Array.from(new Set([...games.map((game) => game.type), typeFilter].filter(Boolean))).sort();
   const totalPages = Math.max(1, Math.ceil(totalGames / GAME_PAGE_SIZE));
   const pageStart = totalGames === 0 ? 0 : (currentPage - 1) * GAME_PAGE_SIZE + 1;
   const pageEnd = totalGames === 0 ? 0 : Math.min(currentPage * GAME_PAGE_SIZE, totalGames);
-
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -228,28 +253,13 @@ function App() {
       </aside>
 
       <main className="main-panel">
-        <header className="topbar">
-          <h1>Ludostock</h1>
-        </header>
-
         {message ? <section className={`flash flash-${message.tone}`}>{message.text}</section> : null}
 
         {!hasLoadedOnce ? (
           <section className="loading-card">
-            <h2>Chargement du referentiel</h2>
-            <p>Recuperation des jeux, auteurs, editeurs et distributeurs depuis FastAPI.</p>
+            <h2>Chargement initial</h2>
+            <p>Recuperation des jeux depuis FastAPI.</p>
           </section>
-        ) : null}
-
-        {hasLoadedOnce && activeNav === "overview" ? (
-          <OverviewSection
-            gameCount={catalogGameCount || totalGames}
-            authorCount={references.authors.length}
-            artistCount={references.artists.length}
-            editorCount={references.editors.length}
-            distributorCount={references.distributors.length}
-            onOpenSection={setActiveNav}
-          />
         ) : null}
 
         {hasLoadedOnce && activeNav === "games" ? (
@@ -297,61 +307,24 @@ function App() {
           />
         ) : null}
 
-        {hasLoadedOnce && ["authors", "artists", "editors", "distributors"].includes(activeNav) ? (
+        {hasLoadedOnce && activeNav === "references" ? (
           <EntitiesSection
-            activeNav={activeNav as ReferenceKey}
+            activeReference={activeReference}
             drafts={referenceDrafts}
+            isReferenceLoaded={referenceLoaded}
+            isReferenceLoading={referenceLoading}
+            referenceHasNext={referenceHasNext}
+            referencePages={referencePages}
             references={references}
             onCreateReference={createReference}
             onDeleteReference={deleteReference}
             onDraftChange={setReferenceDrafts}
+            onReferencePageChange={(kind, pageNumber) => void loadReferencePage(kind, pageNumber)}
+            onSelectReference={(kind) => void toggleReference(kind)}
           />
         ) : null}
       </main>
     </div>
-  );
-}
-
-function OverviewSection({
-  gameCount,
-  authorCount,
-  artistCount,
-  editorCount,
-  distributorCount,
-  onOpenSection,
-}: {
-  gameCount: number;
-  authorCount: number;
-  artistCount: number;
-  editorCount: number;
-  distributorCount: number;
-  onOpenSection: (nav: NavKey) => void;
-}) {
-  return (
-    <section className="overview-layout">
-      <div className="overview-cards">
-        <button type="button" className="overview-card accent-coral" onClick={() => onOpenSection("games")}>
-          <h3>Jeux</h3>
-          <strong>{gameCount} elements</strong>
-        </button>
-        <button type="button" className="overview-card accent-sage" onClick={() => onOpenSection("authors")}>
-          <h3>Auteurs</h3>
-          <strong>{authorCount} elements</strong>
-        </button>
-        <button type="button" className="overview-card accent-rose" onClick={() => onOpenSection("artists")}>
-          <h3>Artistes</h3>
-          <strong>{artistCount} elements</strong>
-        </button>
-        <button type="button" className="overview-card accent-sky" onClick={() => onOpenSection("editors")}>
-          <h3>Editeurs</h3>
-          <strong>{editorCount} elements</strong>
-        </button>
-        <button type="button" className="overview-card accent-wheat" onClick={() => onOpenSection("distributors")}>
-          <h3>Distributeurs</h3>
-          <strong>{distributorCount} elements</strong>
-        </button>
-      </div>
-    </section>
   );
 }
 
@@ -698,14 +671,33 @@ function GameHoverCard({ game, isVisible }: { game: Game; isVisible: boolean }) 
 }
 
 function EntitiesSection(props: {
-  activeNav: ReferenceKey;
+  activeReference: ReferenceKey | null;
   drafts: ReferenceDrafts;
+  isReferenceLoaded: Record<ReferenceKey, boolean>;
+  isReferenceLoading: Record<ReferenceKey, boolean>;
+  referenceHasNext: Record<ReferenceKey, boolean>;
+  referencePages: Record<ReferenceKey, number>;
   references: ReferenceCollection;
   onCreateReference: (kind: ReferenceKey, event: FormEvent<HTMLFormElement>) => Promise<void>;
   onDeleteReference: (kind: ReferenceKey, id: number) => Promise<void>;
   onDraftChange: (updater: (current: ReferenceDrafts) => ReferenceDrafts) => void;
+  onReferencePageChange: (kind: ReferenceKey, pageNumber: number) => void;
+  onSelectReference: (kind: ReferenceKey) => void;
 }) {
-  const { activeNav, drafts, references, onCreateReference, onDeleteReference, onDraftChange } = props;
+  const {
+    activeReference,
+    drafts,
+    isReferenceLoaded,
+    isReferenceLoading,
+    referenceHasNext,
+    referencePages,
+    references,
+    onCreateReference,
+    onDeleteReference,
+    onDraftChange,
+    onReferencePageChange,
+    onSelectReference,
+  } = props;
 
   return (
     <section className="entities-layout">
@@ -713,54 +705,106 @@ function EntitiesSection(props: {
         <h2>Referentiels</h2>
       </section>
 
-      <div className="entity-grid">
-        {(["authors", "artists", "editors", "distributors"] as ReferenceKey[]).map((kind) => (
-          <section key={kind} className={`panel entity-panel ${activeNav === kind ? "entity-panel-active" : ""}`}>
-            <div className="section-intro compact">
-              <p className="eyebrow">{referenceEndpoints[kind].toUpperCase()}</p>
-              <h2>{referenceTitles[kind]}</h2>
-              <p>POST / GET / DELETE</p>
-            </div>
+      <div className="entity-accordion">
+        {referenceNavItems.map((kind) => {
+          const isOpen = activeReference === kind;
+          const isLoading = isReferenceLoading[kind];
+          const hasLoaded = isReferenceLoaded[kind];
+          const currentPage = referencePages[kind];
+          const canGoBack = currentPage > 1;
+          const canGoForward = referenceHasNext[kind];
 
-            <form className="entity-form" onSubmit={(event) => void onCreateReference(kind, event)}>
-              <Field label="Nouveau nom">
-                <input
-                  value={drafts[kind]}
-                  onChange={(event) => onDraftChange((current) => ({ ...current, [kind]: event.target.value }))}
-                  placeholder={`Ajouter un ${referenceTitles[kind].slice(0, -1).toLowerCase()}`}
-                />
-              </Field>
-              <button type="submit" className="primary-button">
-                Ajouter
+          return (
+            <section key={kind} className={`panel entity-panel ${isOpen ? "entity-panel-active" : ""}`}>
+              <button
+                type="button"
+                className={`entity-toggle ${isOpen ? "entity-toggle-active" : ""}`}
+                onClick={() => onSelectReference(kind)}
+                aria-expanded={isOpen}
+              >
+                <span className="entity-toggle-title">{referenceTitles[kind]}</span>
+                <span className="entity-toggle-count">{isOpen ? "Masquer" : "Afficher"}</span>
               </button>
-            </form>
 
-            <div className="simple-table">
-              <div className="simple-head">
-                <span>ID</span>
-                <span>Nom</span>
-                <span>Action</span>
-              </div>
+              {isOpen ? (
+                <div className="entity-panel-body">
+                  <div className="section-intro compact">
+                    <p className="eyebrow">{referenceEndpoints[kind].toUpperCase()}</p>
+                    <h2>{referenceTitles[kind]}</h2>
+                    <p>POST / GET / DELETE</p>
+                  </div>
 
-              {references[kind].length === 0 ? (
-                <div className="empty-state compact">
-                  <h3>Referentiel vide</h3>
-                  <p>Le backend renverra ici la liste paginee par defaut.</p>
-                </div>
-              ) : (
-                references[kind].map((item) => (
-                  <div key={item.id} className="simple-row">
-                    <span>{item.id}</span>
-                    <span>{item.name}</span>
-                    <button type="button" className="link-button danger" onClick={() => void onDeleteReference(kind, item.id)}>
-                      Supprimer
+                  <form className="entity-form" onSubmit={(event) => void onCreateReference(kind, event)}>
+                    <Field label="Nouveau nom">
+                      <input
+                        value={drafts[kind]}
+                        onChange={(event) => onDraftChange((current) => ({ ...current, [kind]: event.target.value }))}
+                        placeholder={`Ajouter un ${referenceTitles[kind].slice(0, -1).toLowerCase()}`}
+                      />
+                    </Field>
+                    <button type="submit" className="primary-button">
+                      Ajouter
+                    </button>
+                  </form>
+
+                  <div className="simple-table">
+                    <div className="simple-head">
+                      <span>ID</span>
+                      <span>Nom</span>
+                      <span>Action</span>
+                    </div>
+
+                    {isLoading && !hasLoaded ? (
+                      <div className="empty-state compact">
+                        <h3>Chargement</h3>
+                        <p>Recuperation de la page {currentPage}.</p>
+                      </div>
+                    ) : references[kind].length === 0 ? (
+                      <div className="empty-state compact">
+                        <h3>Referentiel vide</h3>
+                        <p>Aucun element n'est disponible pour cette categorie.</p>
+                      </div>
+                    ) : (
+                      references[kind].map((item) => (
+                        <div key={item.id} className="simple-row">
+                          <span>{item.id}</span>
+                          <span>{item.name}</span>
+                          <button
+                            type="button"
+                            className="link-button danger"
+                            onClick={() => void onDeleteReference(kind, item.id)}
+                          >
+                            Supprimer
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="entity-pagination">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={!canGoBack || isLoading}
+                      onClick={() => onReferencePageChange(kind, currentPage - 1)}
+                    >
+                      Page precedente
+                    </button>
+                    <span>Page {currentPage}</span>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={!canGoForward || isLoading}
+                      onClick={() => onReferencePageChange(kind, currentPage + 1)}
+                    >
+                      Page suivante
                     </button>
                   </div>
-                ))
-              )}
-            </div>
-          </section>
-        ))}
+                </div>
+              ) : null}
+            </section>
+          );
+        })}
       </div>
     </section>
   );

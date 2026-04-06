@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import import_data
+import data.import_data as import_data
 
 
 def test_row_to_game_payload_parses_core_fields():
