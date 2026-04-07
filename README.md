@@ -1,89 +1,119 @@
 # Ludostock
 
-Projet d'application de gestion d'une collection de jeux de société.
+Projet d'application de gestion d'une collection de jeux de societe.
 
 ## Backend
 
-L'application Backend est développée en FastAPI. Elle fournit l'API pour gérer les données de la collection de jeux.
+L'application backend est developpee en FastAPI. Elle fournit l'API pour gerer les donnees de la collection de jeux.
+
+## Authentification
+
+L'authentification est assuree par un service Better Auth dedie, configure en connexion Google uniquement. Le frontend consomme `/api/auth/*` via proxy et le backend FastAPI valide la session courante aupres de ce service avant d'autoriser les routes metier.
 
 ## Frontend
 
-L'application Frontend est développée en React. Elle offre une interface utilisateur pour interagir avec la collection de jeux.
+L'application frontend est developpee en React. Elle offre une interface utilisateur pour interagir avec la collection de jeux.
 
 ## Running with Docker Compose
 
-To run the frontend and backend applications using Docker Compose, ensure you have Docker and Docker Compose installed on your system. Then, follow these steps:
+To run the frontend, auth, and backend services with Docker Compose:
 
-1.  **Prerequisites:**
-    *   [Docker](https://docs.docker.com/get-docker/)
-    *   [Docker Compose](https://docs.docker.com/compose/install/)
+1. **Prerequisites**
+   - [Docker](https://docs.docker.com/get-docker/)
+   - [Docker Compose](https://docs.docker.com/compose/install/)
 
-2.  **Build and start the services:**
-    ```bash
-    docker-compose up --build
-    ```
-    This command will build the Docker images for both the frontend and backend (if they don't exist or if changes were made) and then start the containers.
+2. **Set environment variables**
+   ```bash
+   export BETTER_AUTH_SECRET=replace-with-a-secret-of-at-least-32-characters
+   export GOOGLE_CLIENT_ID=replace-with-your-google-client-id
+   export GOOGLE_CLIENT_SECRET=replace-with-your-google-client-secret
+   export AUTH_INTERNAL_SECRET=replace-with-an-internal-shared-secret
+   ```
 
-3.  **Access the applications:**
-    *   Frontend: Open your web browser and go to [http://localhost:80](http://localhost:80)
-    *   Backend API: The backend will be accessible at [http://localhost:8081](http://localhost:8081)
+3. **Build and start the services**
+   ```bash
+   docker-compose up --build
+   ```
 
-4.  **To stop the services:**
-    Press `Ctrl+C` in the terminal where `docker-compose up` is running.
+4. **Access the applications**
+   - Frontend: [http://localhost:80](http://localhost:80)
+   - Backend API: [http://localhost:8081](http://localhost:8081)
+   - Google OAuth callback in Docker mode: `http://localhost/api/auth/callback/google`
 
-5.  **To stop and remove the containers:**
-    ```bash
-    docker-compose down
-    ```
+5. **Stop the services**
+   Press `Ctrl+C` in the terminal where `docker-compose up` is running.
 
-## Running Locally (Without Docker)
+6. **Remove the containers**
+   ```bash
+   docker-compose down
+   ```
 
-This section describes how to run the backend and frontend applications directly on your local machine without using Docker.
+## Running Locally
 
 ### Backend
 
-1.  **Navigate to the backend directory:**
-    ```bash
-    cd backend
-    ```
+1. **Navigate to the backend directory**
+   ```bash
+   cd backend
+   ```
 
-2.  **Install Python dependencies:**
-    It's recommended to use a virtual environment.
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-    pip install -r requirements.txt
-    ```
+2. **Install Python dependencies**
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+   pip install -r requirements.txt
+   ```
 
-3.  **Run the backend application:**
-    ```bash
-    ./start-dev.sh
-    ```
-    Alternatively, you can run uvicorn directly:
-    ```bash
-    uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
-    ```
+3. **Configure the backend environment**
+   Set `AUTH_SERVICE_URL=http://localhost:3001` and the same `AUTH_INTERNAL_SECRET` as the auth service.
 
-4.  **Access the backend API:**
-    The backend will be accessible at [http://localhost:8080](http://localhost:8080).
+4. **Run the backend application**
+   ```bash
+   uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
+   ```
+
+5. **Access the backend API**
+   The backend will be accessible at [http://localhost:8081](http://localhost:8081).
+
+### Auth
+
+1. **Navigate to the auth directory**
+   ```bash
+   cd auth
+   ```
+
+2. **Install Node.js dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Create an environment file from `auth/.env.example`**
+   Set `BETTER_AUTH_URL=http://localhost:5173` for local Vite development and configure your Google client ID and secret.
+
+4. **Run the auth service**
+   ```bash
+   npm run dev
+   ```
+
+5. **Google OAuth callback for local Vite development**
+   `http://localhost:5173/api/auth/callback/google`
 
 ### Frontend
 
-1.  **Navigate to the frontend directory:**
-    ```bash
-    cd frontend
-    ```
+1. **Navigate to the frontend directory**
+   ```bash
+   cd frontend
+   ```
 
-2.  **Install Node.js dependencies:**
-    ```bash
-    npm install
-    ```
+2. **Install Node.js dependencies**
+   ```bash
+   npm install
+   ```
 
-3.  **Run the frontend application:**
-    ```bash
-    npm start
-    ```
+3. **Run the frontend application**
+   ```bash
+   npm run dev
+   ```
 
-4.  **Access the frontend application:**
-    The frontend will be accessible at [http://localhost:3000](http://localhost:3000).
-    The application will automatically reload if you make changes to the source files.
+4. **Access the frontend**
+   The frontend will be accessible at [http://localhost:5173](http://localhost:5173).

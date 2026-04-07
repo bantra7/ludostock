@@ -3,10 +3,12 @@
 from contextlib import asynccontextmanager
 from typing import List, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from . import __version__, crud, schemas
+from .auth import AUTH_EXEMPT_PATHS, get_authenticated_session
 from .config import ALLOW_ORIGINS
 from .database import init_db
 
@@ -26,6 +28,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def require_authentication(request: Request, call_next):
+    """Require a valid Better Auth session for every protected API route."""
+    if request.method == "OPTIONS" or request.url.path in AUTH_EXEMPT_PATHS or not request.url.path.startswith("/api/"):
+        return await call_next(request)
+
+    try:
+        session_payload = await get_authenticated_session(request)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    request.state.user = session_payload.get("user")
+    request.state.session = session_payload.get("session")
+    return await call_next(request)
 
 
 @app.get("/api/meta/version/", response_model=schemas.VersionInfo, tags=["Meta"])
@@ -240,6 +258,40 @@ def create_collection(collection: schemas.CollectionCreate):
 def get_collections(skip: int = 0, limit: int = 100):
     """List collections."""
     return crud.get_collections(skip=skip, limit=limit)
+
+
+@app.get("/api/me/collection/games/", response_model=schemas.GamePage, tags=["Collections"])
+def get_my_collection_games(
+    request: Request,
+    skip: int = 0,
+    limit: int = Query(default=100, ge=1, le=500),
+    search: str | None = None,
+    game_type: str | None = Query(default=None, alias="type"),
+    year: str | None = None,
+    sort_by: Literal["name", "type", "creation_year", "players", "duration_minutes", "authors", "editors"] = "name",
+    sort_dir: Literal["asc", "desc"] = "asc",
+):
+    """List the authenticated user's personal collection games."""
+    return crud.get_personal_collection_games(
+        auth_user=request.state.user,
+        skip=skip,
+        limit=limit,
+        search=search,
+        game_type=game_type,
+        year=year,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
+
+
+@app.post("/api/me/collection/games/", response_model=schemas.CollectionGame, tags=["Collections"])
+def add_game_to_my_collection(request: Request, payload: schemas.PersonalCollectionGameCreate):
+    """Add a catalog game to the authenticated user's personal collection."""
+    return crud.add_game_to_personal_collection(
+        auth_user=request.state.user,
+        game_id=payload.game_id,
+        quantity=payload.quantity or 1,
+    )
 
 
 @app.get("/api/collections/{collection_id}", response_model=schemas.Collection, tags=["Collections"])

@@ -144,3 +144,50 @@ def test_get_games_page_sorts_by_author_and_numeric_fields(sqlite_game_store):
 
     assert [game["name"] for game in author_sorted_page["items"]] == ["Patchwork", "Cascadia", "Azul"]
     assert [game["name"] for game in duration_sorted_page["items"]] == ["Patchwork", "Azul", "Cascadia"]
+
+
+def test_get_personal_collection_games_creates_user_collection_and_filters(sqlite_game_store):
+    azul = crud.create_game(
+        schemas.GameCreate(name="Azul", type="jeu", authors=["Michael Kiesling"], editors=["Next Move"])
+    )
+    patchwork = crud.create_game(
+        schemas.GameCreate(name="Patchwork", type="jeu", authors=["Uwe Rosenberg"], editors=["Lookout Games"])
+    )
+
+    auth_user = {"name": "Alice Example", "email": "alice@example.com"}
+
+    crud.add_game_to_personal_collection(auth_user=auth_user, game_id=azul["id"])
+    crud.add_game_to_personal_collection(auth_user=auth_user, game_id=patchwork["id"])
+
+    page = crud.get_personal_collection_games(
+        auth_user=auth_user,
+        skip=0,
+        limit=10,
+        search="patch",
+        sort_by="name",
+        sort_dir="asc",
+    )
+
+    users = crud.get_users()
+    collections = crud.get_collections()
+
+    assert len(users) == 1
+    assert users[0]["username"] == "Alice Example"
+    assert len(collections) == 1
+    assert collections[0]["name"] == "Collection de Alice Example"
+    assert page["total"] == 1
+    assert [game["name"] for game in page["items"]] == ["Patchwork"]
+
+
+def test_add_game_to_personal_collection_rejects_duplicate_game(sqlite_game_store):
+    azul = crud.create_game(
+        schemas.GameCreate(name="Azul", type="jeu", authors=["Michael Kiesling"], editors=["Next Move"])
+    )
+    auth_user = {"name": "Alice Example", "email": "alice@example.com"}
+
+    crud.add_game_to_personal_collection(auth_user=auth_user, game_id=azul["id"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        crud.add_game_to_personal_collection(auth_user=auth_user, game_id=azul["id"])
+
+    assert exc_info.value.status_code == 409

@@ -54,32 +54,54 @@ def _fetch_paginated_rows(table: str, skip: int = 0, limit: int = 100) -> list[d
     return _rows_to_dicts(rows)
 
 
+def _fetch_row_by_column(table: str, column: str, value: Any) -> dict[str, Any] | None:
+    """Fetch a single row from a table using an equality filter."""
+    with get_connection() as connection:
+        row = connection.execute(
+            f"SELECT * FROM {table} WHERE {column} = ? LIMIT 1",
+            (value,),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
 def _build_game_filters(
     search: str | None = None,
     game_type: str | None = None,
     year: str | None = None,
 ) -> tuple[str, list[Any]]:
     """Build the SQL filter clause for paginated game queries."""
-    clauses: list[str] = []
-    parameters: list[Any] = []
-
-    if search and search.strip():
-        pattern = f"%{search.strip().lower()}%"
-        clauses.append("LOWER(g.name) LIKE ?")
-        parameters.append(pattern)
-
-    if game_type and game_type.strip():
-        clauses.append("LOWER(g.type) = ?")
-        parameters.append(game_type.strip().lower())
-
-    if year and year.strip():
-        clauses.append("CAST(g.creation_year AS TEXT) LIKE ?")
-        parameters.append(f"%{year.strip()}%")
+    clauses, parameters = _build_game_filter_clauses(search=search, game_type=game_type, year=year)
 
     if not clauses:
         return "", parameters
 
     return f" WHERE {' AND '.join(clauses)}", parameters
+
+
+def _build_game_filter_clauses(
+    search: str | None = None,
+    game_type: str | None = None,
+    year: str | None = None,
+    table_alias: str = "g",
+) -> tuple[list[str], list[Any]]:
+    """Build SQL filter clauses and parameters for game queries."""
+    clauses: list[str] = []
+    parameters: list[Any] = []
+
+    if search and search.strip():
+        pattern = f"%{search.strip().lower()}%"
+        clauses.append(f"LOWER({table_alias}.name) LIKE ?")
+        parameters.append(pattern)
+
+    if game_type and game_type.strip():
+        clauses.append(f"LOWER({table_alias}.type) = ?")
+        parameters.append(game_type.strip().lower())
+
+    if year and year.strip():
+        clauses.append(f"CAST({table_alias}.creation_year AS TEXT) LIKE ?")
+        parameters.append(f"%{year.strip()}%")
+
+    return clauses, parameters
 
 
 def _build_game_order(sort_by: GameSortField = "name", sort_dir: GameSortDirection = "asc") -> str:
@@ -293,6 +315,103 @@ def _serialize_collection(
     return payload
 
 
+def _get_authenticated_user_profile(auth_user: dict[str, Any]) -> dict[str, str]:
+    """Extract the unique name and email of the authenticated user."""
+    username = str(auth_user.get("name") or "").strip()
+    email = str(auth_user.get("email") or "").strip().lower()
+
+    if not username:
+        raise HTTPException(status_code=400, detail="Authenticated user name is required")
+    if not email:
+        raise HTTPException(status_code=400, detail="Authenticated user email is required")
+
+    return {"username": username, "email": email}
+
+
+def _sync_user_profile(user_id: str, email: str, username: str) -> dict[str, Any]:
+    """Update the stored profile for an existing user."""
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE users SET email = ?, username = ? WHERE id = ?",
+            (email, username, user_id),
+        )
+        connection.commit()
+    return get_user(user_id)
+
+
+def _get_or_create_authenticated_user(auth_user: dict[str, Any]) -> dict[str, Any]:
+    """Return the local user row matching the authenticated Google profile."""
+    profile = _get_authenticated_user_profile(auth_user)
+    existing_user = get_user_by_username(profile["username"]) or get_user_by_email(profile["email"])
+
+    if existing_user is None:
+        return create_user(
+            schemas.UserCreate(email=profile["email"], username=profile["username"]),
+        )
+
+    needs_sync = (
+        str(existing_user.get("email") or "").strip().lower() != profile["email"]
+        or str(existing_user.get("username") or "").strip() != profile["username"]
+    )
+    if needs_sync:
+        return _sync_user_profile(existing_user["id"], profile["email"], profile["username"])
+
+    return existing_user
+
+
+def _get_collection_by_owner(owner_id: str | UUID) -> dict[str, Any] | None:
+    """Fetch the first collection owned by a given user."""
+    return _fetch_row_by_column("collections", "owner_id", str(owner_id))
+
+
+def _get_or_create_personal_collection(auth_user: dict[str, Any]) -> dict[str, Any]:
+    """Return the authenticated user's personal collection, creating it when missing."""
+    user = _get_or_create_authenticated_user(auth_user)
+    collection = _get_collection_by_owner(user["id"])
+
+    if collection is None:
+        username = str(user.get("username") or "").strip() or "Utilisateur"
+        collection = create_collection(
+            schemas.CollectionCreate(
+                name=f"Collection de {username}",
+                description=f"Collection personnelle de {username}",
+                owner_id=UUID(str(user["id"])),
+            )
+        )
+
+    return collection
+
+
+def _get_collection_game_by_identity(
+    collection_id: int,
+    game_id: int,
+    location_id: int | None = None,
+) -> dict[str, Any] | None:
+    """Fetch a collection game row by its natural key."""
+    with get_connection() as connection:
+        if location_id is None:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM collection_games
+                WHERE collection_id = ? AND game_id = ? AND location_id IS NULL
+                LIMIT 1
+                """,
+                (collection_id, game_id),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM collection_games
+                WHERE collection_id = ? AND game_id = ? AND location_id = ?
+                LIMIT 1
+                """,
+                (collection_id, game_id, location_id),
+            ).fetchone()
+    return _row_to_dict(row)
+
+
 def get_games(skip: int = 0, limit: int = 100):
     """Return paginated games with their related contributors."""
     game_rows = _fetch_paginated_rows("games", skip=skip, limit=limit)
@@ -504,6 +623,19 @@ def get_user(user_id: str | UUID):
     return _fetch_row("users", str(user_id))
 
 
+def get_user_by_email(email: str):
+    """Return a user by email."""
+    return _fetch_row_by_column("users", "email", email.strip().lower())
+
+
+def get_user_by_username(username: str):
+    """Return a user by username."""
+    cleaned_username = username.strip()
+    if not cleaned_username:
+        return None
+    return _fetch_row_by_column("users", "username", cleaned_username)
+
+
 def create_user(user: schemas.UserCreate, user_id: UUID | None = None):
     """Create a user with an optional explicit id."""
     payload = user.model_dump()
@@ -644,9 +776,84 @@ def get_collection_games(skip: int = 0, limit: int = 100):
     return _fetch_paginated_rows("collection_games", skip=skip, limit=limit)
 
 
+def get_personal_collection_games(
+    auth_user: dict[str, Any],
+    skip: int = 0,
+    limit: int = 100,
+    search: str | None = None,
+    game_type: str | None = None,
+    year: str | None = None,
+    sort_by: GameSortField = "name",
+    sort_dir: GameSortDirection = "asc",
+):
+    """Return a paginated and filterable page for the authenticated user's collection."""
+    collection = _get_or_create_personal_collection(auth_user)
+    game_filter_clauses, game_filter_params = _build_game_filter_clauses(
+        search=search,
+        game_type=game_type,
+        year=year,
+    )
+    where_clauses = ["cg.collection_id = ?", *game_filter_clauses]
+    where_clause = f" WHERE {' AND '.join(where_clauses)}"
+    parameters = [collection["id"], *game_filter_params]
+    order_clause = _build_game_order(sort_by=sort_by, sort_dir=sort_dir)
+
+    with get_connection() as connection:
+        total = connection.execute(
+            f"""
+            SELECT COUNT(DISTINCT g.id)
+            FROM games g
+            JOIN collection_games cg ON cg.game_id = g.id
+            {where_clause}
+            """,
+            tuple(parameters),
+        ).fetchone()[0]
+
+        game_rows = _rows_to_dicts(
+            connection.execute(
+                f"""
+                SELECT DISTINCT g.*
+                FROM games g
+                JOIN collection_games cg ON cg.game_id = g.id
+                {where_clause}
+                ORDER BY {order_clause}
+                LIMIT ? OFFSET ?
+                """,
+                tuple([*parameters, limit, skip]),
+            ).fetchall()
+        )
+
+    relations = _load_game_relations([row["id"] for row in game_rows])
+    return {
+        "items": [_serialize_game(row, relations) for row in game_rows],
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+    }
+
+
 def get_collection_game(collection_game_id: int):
     """Return a single collection game."""
     return _fetch_row("collection_games", collection_game_id)
+
+
+def add_game_to_personal_collection(auth_user: dict[str, Any], game_id: int, quantity: int = 1):
+    """Add a catalog game to the authenticated user's collection."""
+    collection = _get_or_create_personal_collection(auth_user)
+
+    if get_game(game_id) is None:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    if _get_collection_game_by_identity(collection["id"], game_id) is not None:
+        raise HTTPException(status_code=409, detail="Game is already present in the personal collection")
+
+    return create_collection_game(
+        schemas.CollectionGameCreate(
+            collection_id=collection["id"],
+            game_id=game_id,
+            quantity=quantity,
+        )
+    )
 
 
 def create_collection_game(collection_game: schemas.CollectionGameCreate):

@@ -1,3 +1,14 @@
+### 1.1.0 (2026-04-07)
+
+* Ajout d'un service Better Auth dedie avec connexion Google, d'un client auth React et des scripts/package associes.
+* Protection des routes FastAPI via validation de session Better Auth, avec nouvelles options de configuration (`AUTH_SERVICE_URL`, `AUTH_INTERNAL_SECRET`, timeout) et dependance `httpx`.
+* Synchronisation ou creation automatique de l'utilisateur authentifie cote backend, creation de sa collection personnelle si absente, et nouveaux endpoints `GET /api/me/collection/games/` et `POST /api/me/collection/games/`.
+* Extension des tests backend pour couvrir la collection personnelle et le branchement des nouvelles routes FastAPI.
+* Evolution du frontend avec parcours de connexion/deconnexion Google, ecran d'authentification, menu profil, nouvelle navigation `Ma collection` et ajout de jeux du catalogue vers la collection personnelle.
+* Refonte de certaines interactions d'interface, notamment les cartes de survol des jeux, la pagination/libelles et les styles associes.
+* Passage du frontend sur une base d'API relative `/api` avec cookies inclus, proxys Vite et Nginx pour `/api` et `/api/auth`, et mise a jour de l'image frontend pour embarquer cette configuration.
+* Mise a jour de `docker-compose.yml` et de la documentation (`README.md`, `backend/README.md`) pour decrire le nouveau service auth, les variables d'environnement et les modes d'execution local/Docker.
+
 ### 1.0.3 (2026-04-06)
 
 * Amelioration de l'exploration du catalogue avec recherche, tri et pagination cote interface.

@@ -1,6 +1,6 @@
 # Backend
 
-Ce backend FastAPI utilise maintenant SQLite en local, sans Supabase ni mecanisme d'authentification.
+Ce backend FastAPI utilise SQLite en local et s'appuie sur un service Better Auth externe pour valider les sessions Google.
 
 ## Configuration
 
@@ -9,6 +9,9 @@ Les variables utiles sont :
 - `SQLITE_PATH` : chemin du fichier SQLite
 - `ENV_PATH` : fichier `.env` a charger
 - `ALLOW_ORIGINS` : liste CORS, en CSV ou JSON
+- `AUTH_SERVICE_URL` : URL du service Better Auth
+- `AUTH_INTERNAL_SECRET` : secret partage entre FastAPI et le service auth
+- `AUTH_SERVICE_TIMEOUT_SECONDS` : timeout des validations de session
 
 Un exemple est fourni dans [backend/app/.env.example](/c:/Users/renau/projects/ludostock/backend/app/.env.example).
 
@@ -50,7 +53,9 @@ Le CSV historique `data/raw/trictac_data.csv` ne contient pas ces colonnes ; si 
 ```text
 ENVIRONMENT=local
 SQLITE_PATH=backend/app/ludostock.db
-ALLOW_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+ALLOW_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost,http://127.0.0.1
+AUTH_SERVICE_URL=http://localhost:3001
+AUTH_INTERNAL_SECRET=replace-with-your-internal-shared-secret
 ```
 
 ## Tests backend

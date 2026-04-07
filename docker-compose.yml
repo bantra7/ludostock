@@ -1,15 +1,28 @@
 services:
+  auth:
+    build:
+      context: .
+      dockerfile: auth/Dockerfile
+    env_file:
+      - ./docker-compose.secrets.txt
+    environment:
+      - PORT=3001
+      - BETTER_AUTH_URL=http://localhost
+
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    env_file:
+      - ./docker-compose.secrets.txt
     ports:
       - "8081:8081"
     environment:
       - ENV_PATH=/app/backend/app/.env
       - PORT=8081
       - SQLITE_PATH=/workspace/ludostock.db
-      - ALLOW_ORIGINS=http://localhost,http://localhost:80,http://127.0.0.1,http://127.0.0.1:80
+      - ALLOW_ORIGINS=http://localhost,http://localhost:80,http://127.0.0.1,http://127.0.0.1:80,http://localhost:5173,http://127.0.0.1:5173
+      - AUTH_SERVICE_URL=http://auth:3001
     volumes:
       - ./ludostock.db:/workspace/ludostock.db
 
@@ -20,6 +33,7 @@ services:
     ports:
       - "80:80"
     depends_on:
+      - auth
       - backend
 
 networks:

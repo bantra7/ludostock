@@ -1,4 +1,4 @@
-export type NavKey = "games" | "references";
+export type NavKey = "games" | "collection" | "references";
 export type ReferenceKey = "authors" | "artists" | "editors" | "distributors";
 
 export type NamedEntity = {
@@ -52,6 +52,7 @@ export type ReferenceCollection = Record<ReferenceKey, NamedEntity[]>;
 export type ReferenceDrafts = Record<ReferenceKey, string>;
 
 export const navItems: { key: NavKey; label: string }[] = [
+  { key: "collection", label: "Ma collection" },
   { key: "games", label: "Jeux" },
   { key: "references", label: "Referentiels" },
 ];

@@ -1,5 +1,7 @@
-import { FormEvent, useDeferredValue, useEffect, useState } from "react";
+import { FormEvent, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getErrorMessage, joinNames, request } from "./api";
+import { authClient } from "./auth-client";
 import { navItems, referenceEndpoints, referenceNavItems, referenceTitles } from "./types";
 import type {
   Game,
@@ -13,6 +15,7 @@ import type {
 
 const DEFAULT_GAME_PAGE_SIZE = 50;
 const REFERENCE_PAGE_SIZE = 25;
+const CATALOG_PAGE_SIZE = 200;
 const GAME_PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
 const FRONTEND_VERSION = __APP_VERSION__;
 const GAME_SORT_OPTIONS = [
@@ -33,6 +36,49 @@ const GAME_SORT_OPTIONS = [
 ] as const;
 
 type GameSortValue = (typeof GAME_SORT_OPTIONS)[number]["value"];
+type FlashMessage = { tone: "success" | "error"; text: string };
+type AuthenticatedUser = {
+  email?: string | null;
+  image?: string | null;
+  name?: string | null;
+};
+
+function buildGamePagePath(
+  basePath: string,
+  pageNumber: number,
+  pageSize: number,
+  sortValue: GameSortValue,
+  searchValue: string,
+) {
+  const activeSort = getGameSortOption(sortValue);
+  const params = new URLSearchParams({
+    skip: String((pageNumber - 1) * pageSize),
+    limit: String(pageSize),
+    sort_by: activeSort.sortBy,
+    sort_dir: activeSort.sortDir,
+  });
+
+  if (searchValue.trim()) {
+    params.set("search", searchValue.trim());
+  }
+
+  return `${basePath}?${params.toString()}`;
+}
+
+async function fetchAllCatalogGames() {
+  const items: Game[] = [];
+
+  for (let pageNumber = 1; ; pageNumber += 1) {
+    const page = await request<GamePage>(
+      buildGamePagePath("/games/", pageNumber, CATALOG_PAGE_SIZE, "name:asc", ""),
+    );
+    items.push(...page.items);
+
+    if (items.length >= page.total) {
+      return items;
+    }
+  }
+}
 
 function createReferenceNumberMap(initialValue: number) {
   return {
@@ -53,7 +99,73 @@ function createReferenceBooleanMap(initialValue: boolean) {
 }
 
 function App() {
+  const { data: session, error, isPending } = authClient.useSession();
+  const [authMessage, setAuthMessage] = useState<FlashMessage | null>(null);
+
+  async function signInWithGoogle() {
+    setAuthMessage(null);
+    const { error: signInError } = await authClient.signIn.social({
+      provider: "google",
+      callbackURL: "/",
+    });
+
+    if (signInError) {
+      setAuthMessage({ tone: "error", text: signInError.message ?? "Connexion Google impossible." });
+    }
+  }
+
+  async function signOut() {
+    const { error: signOutError } = await authClient.signOut();
+
+    if (signOutError) {
+      setAuthMessage({ tone: "error", text: signOutError.message ?? "Deconnexion impossible." });
+      return;
+    }
+
+    setAuthMessage(null);
+  }
+
+  if (isPending) {
+    return (
+      <AuthenticationShell
+        description="Verification de votre session en cours."
+        message={authMessage}
+        title="Connexion en cours"
+      />
+    );
+  }
+
+  if (error) {
+    return (
+      <AuthenticationShell
+        actionLabel="Continuer avec Google"
+        description="Le service d'authentification ne repond pas correctement pour le moment."
+        message={{ tone: "error", text: getErrorMessage(error) }}
+        onAction={() => void signInWithGoogle()}
+        title="Authentification indisponible"
+      />
+    );
+  }
+
+  if (!session?.user) {
+    return (
+      <AuthenticationShell
+        actionLabel="Continuer avec Google"
+        description="Connectez-vous avec votre compte Google pour acceder a votre catalogue Ludostock."
+        message={authMessage}
+        onAction={() => void signInWithGoogle()}
+        title="Bienvenue dans Ludostock"
+      />
+    );
+  }
+
+  return <AuthenticatedApp authMessage={authMessage} onSignOut={() => void signOut()} user={session.user} />;
+}
+
+function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: () => void; user: AuthenticatedUser }) {
+  const { authMessage, onSignOut, user } = props;
   const [activeNav, setActiveNav] = useState<NavKey>("games");
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [activeReference, setActiveReference] = useState<ReferenceKey | null>(null);
   const [games, setGames] = useState<Game[]>([]);
   const [totalGames, setTotalGames] = useState(0);
@@ -80,16 +192,68 @@ function App() {
   const [gamePageSize, setGamePageSize] = useState<number>(DEFAULT_GAME_PAGE_SIZE);
   const [gameSort, setGameSort] = useState<GameSortValue>("name:asc");
   const [gamesRefreshToken, setGamesRefreshToken] = useState(0);
-  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [message, setMessage] = useState<FlashMessage | null>(null);
   const deferredSearch = useDeferredValue(search);
+  const [collectionGames, setCollectionGames] = useState<Game[]>([]);
+  const [collectionTotalGames, setCollectionTotalGames] = useState(0);
+  const [isCollectionLoading, setIsCollectionLoading] = useState(false);
+  const [hasLoadedCollectionOnce, setHasLoadedCollectionOnce] = useState(false);
+  const [collectionSearch, setCollectionSearch] = useState("");
+  const [collectionCurrentPage, setCollectionCurrentPage] = useState(1);
+  const [collectionPageSize, setCollectionPageSize] = useState<number>(DEFAULT_GAME_PAGE_SIZE);
+  const [collectionSort, setCollectionSort] = useState<GameSortValue>("name:asc");
+  const [collectionRefreshToken, setCollectionRefreshToken] = useState(0);
+  const [catalogGames, setCatalogGames] = useState<Game[]>([]);
+  const [isCatalogLoading, setIsCatalogLoading] = useState(false);
+  const [catalogFilter, setCatalogFilter] = useState("");
+  const [selectedCatalogGameId, setSelectedCatalogGameId] = useState("");
+  const deferredCollectionSearch = useDeferredValue(collectionSearch);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const normalizedCatalogFilter = catalogFilter.trim().toLowerCase();
+  const filteredCatalogGames = normalizedCatalogFilter
+    ? catalogGames.filter((game) => game.name.toLowerCase().includes(normalizedCatalogFilter))
+    : catalogGames;
+  const activeNavItem = navItems.find((item) => item.key === activeNav) ?? navItems[0];
+  const sectionDescriptions: Record<NavKey, string> = {
+    games: "Parcourez et filtrez le catalogue Ludostock.",
+    collection: "Consultez et enrichissez votre collection personnelle.",
+    references: "Administrez les auteurs, artistes, editeurs et distributeurs.",
+  };
 
   useEffect(() => {
     setCurrentPage(1);
   }, [deferredSearch, gamePageSize, gameSort]);
 
   useEffect(() => {
+    setCollectionCurrentPage(1);
+  }, [deferredCollectionSearch, collectionPageSize, collectionSort]);
+
+  useEffect(() => {
     void loadGamesPage(currentPage);
   }, [currentPage, deferredSearch, gamePageSize, gameSort, gamesRefreshToken]);
+
+  useEffect(() => {
+    if (activeNav !== "collection") {
+      return;
+    }
+
+    void loadCollectionPage(collectionCurrentPage);
+  }, [
+    activeNav,
+    collectionCurrentPage,
+    deferredCollectionSearch,
+    collectionPageSize,
+    collectionSort,
+    collectionRefreshToken,
+  ]);
+
+  useEffect(() => {
+    if (activeNav !== "collection" || catalogGames.length > 0 || isCatalogLoading) {
+      return;
+    }
+
+    void loadCatalogGames();
+  }, [activeNav, catalogGames.length, isCatalogLoading]);
 
   useEffect(() => {
     if (!hasLoadedOnce && !isGamesLoading) {
@@ -97,22 +261,55 @@ function App() {
     }
   }, [hasLoadedOnce, isGamesLoading]);
 
+  useEffect(() => {
+    if (selectedCatalogGameId || catalogGames.length === 0) {
+      return;
+    }
+
+    setSelectedCatalogGameId(String(catalogGames[0].id));
+  }, [catalogGames, selectedCatalogGameId]);
+
+  useEffect(() => {
+    if (filteredCatalogGames.length === 0) {
+      setSelectedCatalogGameId("");
+      return;
+    }
+
+    if (!filteredCatalogGames.some((game) => String(game.id) === selectedCatalogGameId)) {
+      setSelectedCatalogGameId(String(filteredCatalogGames[0].id));
+    }
+  }, [filteredCatalogGames, selectedCatalogGameId]);
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      if (!profileMenuRef.current?.contains(event.target as Node)) {
+        setIsProfileMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsProfileMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    setIsProfileMenuOpen(false);
+  }, [activeNav]);
+
   async function loadGamesPage(pageNumber: number) {
     setIsGamesLoading(true);
     try {
-      const activeSort = getGameSortOption(gameSort);
-      const params = new URLSearchParams({
-        skip: String((pageNumber - 1) * gamePageSize),
-        limit: String(gamePageSize),
-        sort_by: activeSort.sortBy,
-        sort_dir: activeSort.sortDir,
-      });
-
-      if (deferredSearch.trim()) {
-        params.set("search", deferredSearch.trim());
-      }
-
-      const page = await request<GamePage>(`/games/?${params.toString()}`);
+      const page = await request<GamePage>(buildGamePagePath("/games/", pageNumber, gamePageSize, gameSort, deferredSearch));
       if (page.items.length === 0 && page.total > 0 && page.skip >= page.total) {
         setCurrentPage(Math.max(1, Math.ceil(page.total / gamePageSize)));
         return;
@@ -124,6 +321,45 @@ function App() {
       setMessage({ tone: "error", text: getErrorMessage(error) });
     } finally {
       setIsGamesLoading(false);
+    }
+  }
+
+  async function loadCollectionPage(pageNumber: number) {
+    setIsCollectionLoading(true);
+    try {
+      const page = await request<GamePage>(
+        buildGamePagePath(
+          "/me/collection/games/",
+          pageNumber,
+          collectionPageSize,
+          collectionSort,
+          deferredCollectionSearch,
+        ),
+      );
+      if (page.items.length === 0 && page.total > 0 && page.skip >= page.total) {
+        setCollectionCurrentPage(Math.max(1, Math.ceil(page.total / collectionPageSize)));
+        return;
+      }
+
+      setCollectionGames(page.items);
+      setCollectionTotalGames(page.total);
+    } catch (error) {
+      setMessage({ tone: "error", text: getErrorMessage(error) });
+    } finally {
+      setIsCollectionLoading(false);
+      setHasLoadedCollectionOnce(true);
+    }
+  }
+
+  async function loadCatalogGames() {
+    setIsCatalogLoading(true);
+    try {
+      const items = await fetchAllCatalogGames();
+      setCatalogGames(items);
+    } catch (error) {
+      setMessage({ tone: "error", text: getErrorMessage(error) });
+    } finally {
+      setIsCatalogLoading(false);
     }
   }
 
@@ -196,6 +432,32 @@ function App() {
     }
   }
 
+  async function addGameToCollection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const gameId = Number(selectedCatalogGameId);
+
+    if (!gameId) {
+      setMessage({ tone: "error", text: "Selectionnez un jeu du catalogue a ajouter." });
+      return;
+    }
+
+    const game = catalogGames.find((entry) => entry.id === gameId);
+
+    try {
+      await request("/me/collection/games/", {
+        method: "POST",
+        body: JSON.stringify({ game_id: gameId, quantity: 1 }),
+      });
+      setCollectionRefreshToken((current) => current + 1);
+      setMessage({
+        tone: "success",
+        text: game ? `${game.name} a ete ajoute a votre collection.` : "Le jeu a ete ajoute a votre collection.",
+      });
+    } catch (error) {
+      setMessage({ tone: "error", text: getErrorMessage(error) });
+    }
+  }
+
   async function loadReferencePage(kind: ReferenceKey, pageNumber: number) {
     setReferenceLoading((current) => ({ ...current, [kind]: true }));
     try {
@@ -235,6 +497,10 @@ function App() {
   const totalPages = Math.max(1, Math.ceil(totalGames / gamePageSize));
   const pageStart = totalGames === 0 ? 0 : (currentPage - 1) * gamePageSize + 1;
   const pageEnd = totalGames === 0 ? 0 : Math.min(currentPage * gamePageSize, totalGames);
+  const collectionTotalPages = Math.max(1, Math.ceil(collectionTotalGames / collectionPageSize));
+  const collectionPageStart = collectionTotalGames === 0 ? 0 : (collectionCurrentPage - 1) * collectionPageSize + 1;
+  const collectionPageEnd =
+    collectionTotalGames === 0 ? 0 : Math.min(collectionCurrentPage * collectionPageSize, collectionTotalGames);
 
   return (
     <div className="app-shell">
@@ -243,6 +509,7 @@ function App() {
           <img className="brand-mark" src="/ludostock-logo.svg" alt="" aria-hidden="true" />
           <div>
             <p className="brand-title">Ludostock</p>
+            <p className="brand-subtitle">Catalogue prive</p>
           </div>
         </div>
 
@@ -261,6 +528,56 @@ function App() {
       </aside>
 
       <main className="main-panel">
+        <header className="topbar">
+          <div className="section-intro">
+            <h1>{activeNavItem.label}</h1>
+            <p>{sectionDescriptions[activeNavItem.key]}</p>
+          </div>
+
+          <div className={`profile-menu ${isProfileMenuOpen ? "open" : ""}`} ref={profileMenuRef}>
+            <button
+              type="button"
+              className="profile-trigger"
+              aria-expanded={isProfileMenuOpen}
+              aria-haspopup="menu"
+              aria-label="Ouvrir le menu profil"
+              onClick={() => setIsProfileMenuOpen((current) => !current)}
+            >
+              <ProfileIcon />
+              <div className="profile-trigger-avatar" aria-hidden="true">
+                {user.image ? <img src={user.image} alt="" /> : <span>{getUserInitial(user)}</span>}
+              </div>
+            </button>
+
+            {isProfileMenuOpen ? (
+              <div className="profile-dropdown" role="menu" aria-label="Menu profil">
+                <div className="profile-dropdown-header">
+                  <div className="profile-dropdown-avatar" aria-hidden="true">
+                    {user.image ? <img src={user.image} alt="" /> : <span>{getUserInitial(user)}</span>}
+                  </div>
+                  <div className="profile-dropdown-copy">
+                    <strong>{user.name || "Utilisateur Google"}</strong>
+                    <span>{user.email || "Adresse e-mail indisponible"}</span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className="secondary-button profile-signout"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsProfileMenuOpen(false);
+                    onSignOut();
+                  }}
+                >
+                  Se deconnecter
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </header>
+
+        {authMessage ? <section className={`flash flash-${authMessage.tone}`}>{authMessage.text}</section> : null}
         {message ? <section className={`flash flash-${message.tone}`}>{message.text}</section> : null}
 
         {!hasLoadedOnce ? (
@@ -290,6 +607,34 @@ function App() {
           />
         ) : null}
 
+        {activeNav === "collection" ? (
+          <CollectionSection
+            catalogFilter={catalogFilter}
+            catalogGames={filteredCatalogGames}
+            currentPage={collectionCurrentPage}
+            games={collectionGames}
+            hasLoadedOnce={hasLoadedCollectionOnce}
+            isCatalogLoading={isCatalogLoading}
+            isCollectionLoading={isCollectionLoading}
+            ownerLabel={user.name || user.email || "Utilisateur Google"}
+            pageEnd={collectionPageEnd}
+            pageSize={collectionPageSize}
+            pageStart={collectionPageStart}
+            search={collectionSearch}
+            selectedCatalogGameId={selectedCatalogGameId}
+            sortValue={collectionSort}
+            totalGames={collectionTotalGames}
+            totalPages={collectionTotalPages}
+            onAddGame={addGameToCollection}
+            onCatalogFilterChange={setCatalogFilter}
+            onPageChange={setCollectionCurrentPage}
+            onPageSizeChange={setCollectionPageSize}
+            onSearchChange={setCollectionSearch}
+            onSelectedCatalogGameIdChange={setSelectedCatalogGameId}
+            onSortChange={setCollectionSort}
+          />
+        ) : null}
+
         {hasLoadedOnce && activeNav === "references" ? (
           <EntitiesSection
             activeReference={activeReference}
@@ -311,6 +656,42 @@ function App() {
           <span>Version {FRONTEND_VERSION}</span>
         </footer>
       </main>
+    </div>
+  );
+}
+
+function AuthenticationShell(props: {
+  actionLabel?: string;
+  description: string;
+  message: FlashMessage | null;
+  onAction?: () => void;
+  title: string;
+}) {
+  const { actionLabel, description, message, onAction, title } = props;
+
+  return (
+    <div className="auth-shell">
+      <section className="auth-card">
+        <div className="brand auth-brand">
+          <img className="brand-mark" src="/ludostock-logo.svg" alt="" aria-hidden="true" />
+          <div>
+            <p className="brand-title">Ludostock</p>
+          </div>
+        </div>
+
+        <div className="section-intro">
+          <h2>{title}</h2>
+          <p>{description}</p>
+        </div>
+
+        {message ? <section className={`flash flash-${message.tone}`}>{message.text}</section> : null}
+
+        {actionLabel && onAction ? (
+          <button type="button" className="primary-button auth-action" onClick={onAction}>
+            {actionLabel}
+          </button>
+        ) : null}
+      </section>
     </div>
   );
 }
@@ -388,15 +769,11 @@ function GamesSection(props: {
         </div>
 
         <div className="table-shell">
-          <div className="table-head">
+          <div className="table-head games-table-head">
             <div>Nom</div>
-            <div>Type</div>
             <div>Annee</div>
             <div>Joueurs</div>
             <div>Duree</div>
-            <div>Auteurs</div>
-            <div>Editeurs</div>
-            <div>Actions</div>
           </div>
 
           <div className="table-body">
@@ -412,38 +789,21 @@ function GamesSection(props: {
               </div>
             ) : (
               games.map((game) => (
-                <div key={game.id} className="table-row">
-                  <div
-                    className="table-name-cell"
-                    onMouseEnter={() => setHoveredGameId(game.id)}
-                    onMouseLeave={() => setHoveredGameId((current) => (current === game.id ? null : current))}
-                  >
-                    {game.url ? (
-                      <a
-                        href={game.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="table-link"
-                        onFocus={() => setHoveredGameId(game.id)}
-                        onBlur={() => setHoveredGameId((current) => (current === game.id ? null : current))}
-                      >
-                        {game.name}
-                      </a>
-                    ) : (
-                      <span className="table-link table-link-static">{game.name}</span>
-                    )}
-                    <GameHoverCard game={game} isVisible={hoveredGameId === game.id} />
+                <div key={game.id} className="table-row games-table-row">
+                  <GameNameCell
+                    game={game}
+                    isVisible={hoveredGameId === game.id}
+                    onHoverEnd={() => setHoveredGameId((current) => (current === game.id ? null : current))}
+                    onHoverStart={() => setHoveredGameId(game.id)}
+                  />
+                  <div>
+                    <CompactGameFact kind="year" label="Annee de publication" value={String(game.creation_year ?? "-")} />
                   </div>
-                  <div>{game.type || "-"}</div>
-                  <div>{game.creation_year ?? "-"}</div>
-                  <div>{formatPlayers(game)}</div>
-                  <div>{formatDuration(game.duration_minutes)}</div>
-                  <div>{joinNames(game.authors) || "-"}</div>
-                  <div>{joinNames(game.editors) || "-"}</div>
-                  <div className="row-actions">
-                    <button type="button" className="link-button danger" onClick={() => onDeleteGame(game.id)}>
-                      Supprimer
-                    </button>
+                  <div>
+                    <CompactGameFact kind="players" label="Nombre de joueurs" value={formatPlayers(game)} />
+                  </div>
+                  <div>
+                    <CompactGameFact kind="duration" label="Duree" value={formatDuration(game.duration_minutes)} />
                   </div>
                 </div>
               ))
@@ -455,7 +815,6 @@ function GamesSection(props: {
       <section className="panel games-footer">
         <div className="games-footer-meta">
           <strong>{resultLabel}</strong>
-          <span>{games.length} elements affiches sur cette page.</span>
         </div>
 
         <div className="games-pagination" aria-label="Pagination des jeux">
@@ -465,7 +824,7 @@ function GamesSection(props: {
             disabled={currentPage <= 1 || isGamesLoading}
             onClick={() => onPageChange(currentPage - 1)}
           >
-            Precedente
+            Precedent
           </button>
 
           <div className="games-pagination-pages">
@@ -494,13 +853,16 @@ function GamesSection(props: {
             disabled={currentPage >= totalPages || isGamesLoading}
             onClick={() => onPageChange(currentPage + 1)}
           >
-            Suivante
+            Suivant
           </button>
         </div>
 
         <label className="games-inline-control games-inline-control-compact">
-          <span>Par page</span>
-          <select value={String(pageSize)} onChange={(event) => onPageSizeChange(Number(event.target.value))}>
+          <select
+            aria-label="Nombre d'elements par page"
+            value={String(pageSize)}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          >
             {GAME_PAGE_SIZE_OPTIONS.map((option) => (
               <option key={option} value={option}>
                 {option}
@@ -513,17 +875,424 @@ function GamesSection(props: {
   );
 }
 
-function GameHoverCard({ game, isVisible }: { game: Game; isVisible: boolean }) {
-  const playerCount =
-    game.min_players !== null && game.max_players !== null
-      ? `${game.min_players}-${game.max_players} joueurs`
-      : null;
-  const meta = [game.creation_year ?? null, playerCount, game.duration_minutes ? `${game.duration_minutes} min` : null]
-    .filter(Boolean)
-    .join(" / ");
+function CollectionSection(props: {
+  catalogFilter: string;
+  catalogGames: Game[];
+  currentPage: number;
+  games: Game[];
+  hasLoadedOnce: boolean;
+  isCatalogLoading: boolean;
+  isCollectionLoading: boolean;
+  ownerLabel: string;
+  pageEnd: number;
+  pageSize: number;
+  pageStart: number;
+  search: string;
+  selectedCatalogGameId: string;
+  sortValue: GameSortValue;
+  totalGames: number;
+  totalPages: number;
+  onAddGame: (event: FormEvent<HTMLFormElement>) => void;
+  onCatalogFilterChange: (value: string) => void;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (value: number) => void;
+  onSearchChange: (value: string) => void;
+  onSelectedCatalogGameIdChange: (value: string) => void;
+  onSortChange: (value: GameSortValue) => void;
+}) {
+  const [hoveredGameId, setHoveredGameId] = useState<number | null>(null);
+  const {
+    catalogFilter,
+    catalogGames,
+    currentPage,
+    games,
+    hasLoadedOnce,
+    isCatalogLoading,
+    isCollectionLoading,
+    ownerLabel,
+    pageEnd,
+    pageSize,
+    pageStart,
+    search,
+    selectedCatalogGameId,
+    sortValue,
+    totalGames,
+    totalPages,
+    onAddGame,
+    onCatalogFilterChange,
+    onPageChange,
+    onPageSizeChange,
+    onSearchChange,
+    onSelectedCatalogGameIdChange,
+    onSortChange,
+  } = props;
+  const paginationItems = buildPaginationItems(currentPage, totalPages);
+  const resultLabel = totalGames === 0 ? "Aucun resultat" : `${pageStart}-${pageEnd} sur ${totalGames}`;
 
   return (
-    <div className={`game-hover-card ${isVisible ? "is-visible" : ""}`} aria-hidden={!isVisible}>
+    <section className="games-layout">
+      <section className="panel games-search">
+        <label className="games-search-field">
+          <span>Recherche</span>
+          <input
+            aria-label="Rechercher un jeu dans ma collection"
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Nom du jeu dans ma collection"
+          />
+        </label>
+      </section>
+
+      <section className="panel collection-add-panel">
+        <div className="section-intro compact">
+          <h2>Ma collection</h2>
+          <p>Collection personnelle de {ownerLabel}.</p>
+        </div>
+
+        <form className="collection-add-form" onSubmit={onAddGame}>
+          <Field label="Filtrer le catalogue">
+            <input
+              value={catalogFilter}
+              onChange={(event) => onCatalogFilterChange(event.target.value)}
+              placeholder="Rechercher un jeu a ajouter"
+            />
+          </Field>
+
+          <Field label="Jeu a ajouter">
+            <select
+              value={selectedCatalogGameId}
+              onChange={(event) => onSelectedCatalogGameIdChange(event.target.value)}
+              disabled={isCatalogLoading || catalogGames.length === 0}
+            >
+              {catalogGames.length === 0 ? <option value="">Aucun jeu disponible</option> : null}
+              {catalogGames.map((game) => (
+                <option key={game.id} value={String(game.id)}>
+                  {game.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <button
+            type="submit"
+            className="primary-button collection-add-action"
+            disabled={isCatalogLoading || catalogGames.length === 0 || !selectedCatalogGameId}
+          >
+            Ajouter
+          </button>
+        </form>
+
+        {isCatalogLoading ? <p className="collection-helper-copy">Chargement du catalogue de jeux.</p> : null}
+        {!isCatalogLoading && catalogGames.length === 0 ? (
+          <p className="collection-helper-copy">Aucun jeu n'est disponible dans le catalogue pour le moment.</p>
+        ) : null}
+      </section>
+
+      <section className="panel games-content">
+        <div className="games-controls">
+          <div className="games-results-copy" aria-live="polite">
+            <strong>{totalGames}</strong>
+            <span>{totalGames > 1 ? "jeux dans ma collection" : "jeu dans ma collection"}</span>
+          </div>
+
+          <label className="games-inline-control">
+            <span>Trier la liste</span>
+            <select value={sortValue} onChange={(event) => onSortChange(event.target.value as GameSortValue)}>
+              {GAME_SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="table-shell">
+          <div className="table-head collection-table-head">
+            <div>Nom</div>
+            <div>Type</div>
+            <div>Annee</div>
+            <div>Joueurs</div>
+            <div>Duree</div>
+            <div>Auteurs</div>
+            <div>Editeurs</div>
+          </div>
+
+          <div className="table-body">
+            {!hasLoadedOnce ? (
+              <div className="empty-state">
+                <h3>Chargement</h3>
+                <p>Recuperation de votre collection en cours.</p>
+              </div>
+            ) : isCollectionLoading ? (
+              <div className="empty-state">
+                <h3>Chargement</h3>
+                <p>Mise a jour de votre collection en cours.</p>
+              </div>
+            ) : games.length === 0 ? (
+              <div className="empty-state">
+                <h3>Collection vide</h3>
+                <p>
+                  {search.trim()
+                    ? "Aucun jeu de votre collection ne correspond a cette recherche."
+                    : "Ajoutez un jeu du catalogue pour commencer votre collection."}
+                </p>
+              </div>
+            ) : (
+              games.map((game) => (
+                <div key={game.id} className="table-row collection-table-row">
+                  <GameNameCell
+                    game={game}
+                    isVisible={hoveredGameId === game.id}
+                    onHoverEnd={() => setHoveredGameId((current) => (current === game.id ? null : current))}
+                    onHoverStart={() => setHoveredGameId(game.id)}
+                  />
+                  <div>{game.type || "-"}</div>
+                  <div>{game.creation_year ?? "-"}</div>
+                  <div>{formatPlayers(game)}</div>
+                  <div>{formatDuration(game.duration_minutes)}</div>
+                  <div>{joinNames(game.authors) || "-"}</div>
+                  <div>{joinNames(game.editors) || "-"}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="panel games-footer">
+        <div className="games-footer-meta">
+          <strong>{resultLabel}</strong>
+          <span>{games.length} elements affiches sur cette page.</span>
+        </div>
+
+        <div className="games-pagination" aria-label="Pagination de ma collection">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={currentPage <= 1 || isCollectionLoading}
+            onClick={() => onPageChange(currentPage - 1)}
+          >
+            Precedent
+          </button>
+
+          <div className="games-pagination-pages">
+            {paginationItems.map((item) =>
+              typeof item === "number" ? (
+                <button
+                  key={item}
+                  type="button"
+                  className={`game-page-button ${item === currentPage ? "active" : ""}`}
+                  disabled={isCollectionLoading}
+                  onClick={() => onPageChange(item)}
+                >
+                  {item}
+                </button>
+              ) : (
+                <span key={item} className="pagination-ellipsis" aria-hidden="true">
+                  ...
+                </span>
+              ),
+            )}
+          </div>
+
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={currentPage >= totalPages || isCollectionLoading}
+            onClick={() => onPageChange(currentPage + 1)}
+          >
+            Suivant
+          </button>
+        </div>
+
+        <label className="games-inline-control games-inline-control-compact">
+          <select
+            aria-label="Nombre d'elements par page"
+            value={String(pageSize)}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          >
+            {GAME_PAGE_SIZE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
+    </section>
+  );
+}
+
+function CompactGameFact({
+  kind,
+  label,
+  value,
+}: {
+  kind: "year" | "players" | "duration";
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="compact-game-fact" aria-label={`${label} : ${value}`}>
+      <GameFactIcon kind={kind} />
+      <span>{value}</span>
+    </div>
+  );
+}
+
+function ProfileIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="profile-trigger-icon">
+      <path
+        d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function GameNameCell(props: {
+  game: Game;
+  isVisible: boolean;
+  onHoverEnd: () => void;
+  onHoverStart: () => void;
+}) {
+  const { game, isVisible, onHoverEnd, onHoverStart } = props;
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+
+  return (
+    <div className="table-name-cell" ref={anchorRef} onMouseEnter={onHoverStart} onMouseLeave={onHoverEnd}>
+      {game.url ? (
+        <a
+          href={game.url}
+          target="_blank"
+          rel="noreferrer"
+          className="table-link"
+          onFocus={onHoverStart}
+          onBlur={onHoverEnd}
+        >
+          {game.name}
+        </a>
+      ) : (
+        <span className="table-link table-link-static">{game.name}</span>
+      )}
+      <GameHoverCard anchorElement={anchorRef.current} game={game} isVisible={isVisible} />
+    </div>
+  );
+}
+
+function GameFactIcon({ kind }: { kind: "year" | "players" | "duration" }) {
+  if (kind === "year") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="game-fact-icon">
+        <path
+          d="M7 2v3M17 2v3M4 8h16M5 5h14a1 1 0 0 1 1 1v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1Z"
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="1.75"
+        />
+      </svg>
+    );
+  }
+
+  if (kind === "players") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" className="game-fact-icon">
+        <path
+          d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm6 1a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM4 19a5 5 0 0 1 10 0M13 19a4 4 0 0 1 7 0"
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="1.75"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="game-fact-icon">
+      <path
+        d="M12 6v6l4 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.75"
+      />
+    </svg>
+  );
+}
+
+function GameHoverCard({
+  anchorElement,
+  game,
+  isVisible,
+}: {
+  anchorElement: HTMLDivElement | null;
+  game: Game;
+  isVisible: boolean;
+}) {
+  const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null);
+  const hoverFacts = [
+    { kind: "year" as const, label: "Annee de publication", value: String(game.creation_year ?? "-") },
+    { kind: "players" as const, label: "Nombre de joueurs", value: formatPlayers(game) },
+    { kind: "duration" as const, label: "Duree", value: formatDuration(game.duration_minutes) },
+  ];
+  const details = [
+    { label: "Type", value: game.type || "-" },
+    { label: "Age minimum", value: game.min_age !== null ? `${game.min_age}+` : "-" },
+    { label: "Auteurs", value: joinNames(game.authors) },
+    { label: "Artistes", value: joinNames(game.artists) },
+    { label: "Editeurs", value: joinNames(game.editors) },
+    { label: "Distributeurs", value: joinNames(game.distributors) },
+  ];
+
+  useLayoutEffect(() => {
+    if (!isVisible || !anchorElement) {
+      setPosition(null);
+      return;
+    }
+
+    const element = anchorElement;
+
+    function updatePosition() {
+      const rect = element.getBoundingClientRect();
+      const margin = 12;
+      const width = Math.min(430, window.innerWidth - margin * 2);
+      const estimatedHeight = 360;
+      const left = Math.min(Math.max(rect.left, margin), window.innerWidth - width - margin);
+      const canRenderBelow = rect.bottom + estimatedHeight + margin <= window.innerHeight;
+      const top = canRenderBelow
+        ? rect.bottom + 10
+        : Math.max(margin, rect.top - estimatedHeight - 10);
+
+      setPosition({ left, top, width });
+    }
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchorElement, isVisible]);
+
+  if (!isVisible || !anchorElement || !position) {
+    return null;
+  }
+
+  return createPortal(
+    <div
+      className="game-hover-card is-visible"
+      style={{ left: `${position.left}px`, top: `${position.top}px`, width: `${position.width}px` }}
+      aria-hidden={!isVisible}
+    >
       <div className="game-hover-media">
         {game.image_url ? (
           <img src={game.image_url} alt={game.name} loading="lazy" />
@@ -534,9 +1303,22 @@ function GameHoverCard({ game, isVisible }: { game: Game; isVisible: boolean }) 
       <div className="game-hover-body">
         <p className="game-hover-type">{game.type}</p>
         <h3>{game.name}</h3>
-        {meta ? <p className="game-hover-meta">{meta}</p> : null}
+        <div className="game-hover-facts">
+          {hoverFacts.map((fact) => (
+            <CompactGameFact key={fact.label} kind={fact.kind} label={fact.label} value={fact.value} />
+          ))}
+        </div>
+        <dl className="game-hover-details">
+          {details.map((detail) => (
+            <div key={detail.label} className="game-hover-detail">
+              <dt>{detail.label}</dt>
+              <dd>{detail.value}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -736,6 +1518,11 @@ function buildPaginationItems(currentPage: number, totalPages: number) {
   });
 
   return items;
+}
+
+function getUserInitial(user: AuthenticatedUser) {
+  const label = user.name?.trim() || user.email?.trim() || "L";
+  return label.slice(0, 1).toUpperCase();
 }
 
 export default App;

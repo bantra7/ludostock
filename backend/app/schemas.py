@@ -157,6 +157,12 @@ class CollectionGameCreate(CollectionGameBase):
     location_id: Optional[int] = None
 
 
+class PersonalCollectionGameCreate(CollectionGameBase):
+    """Payload used to add a game to the authenticated user's collection."""
+
+    game_id: int
+
+
 class CollectionGame(CollectionGameBase):
     """Collection game response schema."""
 

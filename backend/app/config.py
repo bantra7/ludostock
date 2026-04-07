@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     environment: str = "local"
     sqlite_path: str = "backend/app/ludostock.db"
     allow_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
+    auth_service_url: str = "http://localhost:3001"
+    auth_internal_secret: str = ""
+    auth_service_timeout_seconds: float = 5.0
 
     @field_validator("allow_origins", mode="before")
     @classmethod
@@ -49,3 +52,6 @@ settings = Settings()
 ENVIRONMENT = settings.environment
 SQLITE_PATH = settings.sqlite_path
 ALLOW_ORIGINS = settings.allow_origins
+AUTH_SERVICE_URL = settings.auth_service_url
+AUTH_INTERNAL_SECRET = settings.auth_internal_secret
+AUTH_SERVICE_TIMEOUT_SECONDS = settings.auth_service_timeout_seconds
