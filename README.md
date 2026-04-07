@@ -117,3 +117,38 @@ To run the frontend, auth, and backend services with Docker Compose:
 
 4. **Access the frontend**
    The frontend will be accessible at [http://localhost:5173](http://localhost:5173).
+
+## Deploy on GCP
+
+The repository now includes a [cloudbuild.yaml](/c:/Users/renau/projects/ludostock/cloudbuild.yaml) file that:
+
+- builds the `backend`, `frontend`, and `auth` container images;
+- pushes them to Artifact Registry;
+- deploys the three images as three distinct Cloud Run services;
+- wires the frontend proxy to the backend and auth Cloud Run URLs.
+
+### Expected GCP resources
+
+- an Artifact Registry Docker repository, for example `ludostock`;
+- three Cloud Run services:
+  - `ludostock-frontend`
+  - `ludostock-backend`
+  - `ludostock-auth`
+- four Secret Manager secrets:
+  - `better-auth-secret`
+  - `google-client-id`
+  - `google-client-secret`
+  - `auth-internal-secret`
+
+### Run Cloud Build
+
+Example:
+
+```bash
+gcloud builds submit --config cloudbuild.yaml \
+  --substitutions=_REGION=europe-west1,_ARTIFACT_REPOSITORY=ludostock,_IMAGE_TAG=$(git rev-parse --short HEAD),_APP_VERSION=$(cat VERSION)
+```
+
+### Important runtime note
+
+The backend currently uses SQLite. In the provided Cloud Run deployment it writes to `/tmp/ludostock.db`, which is ephemeral and not suitable for durable production data. This setup is acceptable for smoke tests or temporary environments, but a persistent database is still needed for real production usage.

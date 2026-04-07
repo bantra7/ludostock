@@ -11,14 +11,14 @@ services:
 
   backend:
     build:
-      context: .
-      dockerfile: backend/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile
     env_file:
       - ./docker-compose.secrets.txt
     ports:
       - "8081:8081"
     environment:
-      - ENV_PATH=/app/backend/app/.env
+      - ENV_PATH=/app/app/.env
       - PORT=8081
       - SQLITE_PATH=/workspace/ludostock.db
       - ALLOW_ORIGINS=http://localhost,http://localhost:80,http://127.0.0.1,http://127.0.0.1:80,http://localhost:5173,http://127.0.0.1:5173
@@ -32,9 +32,13 @@ services:
       dockerfile: frontend/Dockerfile
     ports:
       - "80:80"
+    environment:
+      - BACKEND_UPSTREAM=http://backend:8081
+      - AUTH_UPSTREAM=http://auth:3001
     depends_on:
       - auth
       - backend
+
 
 networks:
   default:

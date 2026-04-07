@@ -1,3 +1,10 @@
+### 1.2.0 (2026-04-07)
+
+* Ajout d'un pipeline `cloudbuild.yaml` pour construire, publier et deployer les services `backend`, `frontend` et `auth` sur GCP/Cloud Run.
+* Rendu du build backend autonome vis-a-vis du contexte Docker, avec injection possible de la version applicative via `APP_VERSION`.
+* Adaptation du frontend Nginx pour parametrer dynamiquement les upstreams API et auth selon l'environnement de deploiement.
+* Mise a jour de `docker-compose.yml` et de la documentation pour aligner l'execution locale et le deploiement GCP.
+
 ### 1.1.0 (2026-04-07)
 
 * Ajout d'un service Better Auth dedie avec connexion Google, d'un client auth React et des scripts/package associes.
