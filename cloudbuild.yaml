@@ -78,63 +78,63 @@ steps:
         REPOSITORY="${_ARTIFACT_REPOSITORY}"
         TAG="${_IMAGE_TAG}"
 
-        BACKEND_IMAGE="${REGION}-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/${_BACKEND_IMAGE_NAME}:$TAG"
-        FRONTEND_IMAGE="${REGION}-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/${_FRONTEND_IMAGE_NAME}:$TAG"
-        AUTH_IMAGE="${REGION}-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/${_AUTH_IMAGE_NAME}:$TAG"
+        BACKEND_IMAGE="$${REGION}-docker.pkg.dev/$PROJECT_ID/$$REPOSITORY/${_BACKEND_IMAGE_NAME}:$$TAG"
+        FRONTEND_IMAGE="$${REGION}-docker.pkg.dev/$PROJECT_ID/$$REPOSITORY/${_FRONTEND_IMAGE_NAME}:$$TAG"
+        AUTH_IMAGE="$${REGION}-docker.pkg.dev/$PROJECT_ID/$$REPOSITORY/${_AUTH_IMAGE_NAME}:$$TAG"
 
         gcloud run deploy "${_AUTH_SERVICE}" \
-          --image "$AUTH_IMAGE" \
-          --region "$REGION" \
+          --image "$$AUTH_IMAGE" \
+          --region "$$REGION" \
           --platform managed \
           --allow-unauthenticated \
           --port 3001 \
           --set-env-vars "PORT=3001,BETTER_AUTH_URL=https://bootstrap.invalid" \
           --set-secrets "BETTER_AUTH_SECRET=${_BETTER_AUTH_SECRET_NAME}:latest,GOOGLE_CLIENT_ID=${_GOOGLE_CLIENT_ID_SECRET_NAME}:latest,GOOGLE_CLIENT_SECRET=${_GOOGLE_CLIENT_SECRET_SECRET_NAME}:latest,AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
-        AUTH_URL="$(gcloud run services describe "${_AUTH_SERVICE}" --region "$REGION" --format='value(status.url)')"
+        AUTH_URL="$$(gcloud run services describe "${_AUTH_SERVICE}" --region "$$REGION" --format='value(status.url)')"
 
         gcloud run deploy "${_BACKEND_SERVICE}" \
-          --image "$BACKEND_IMAGE" \
-          --region "$REGION" \
+          --image "$$BACKEND_IMAGE" \
+          --region "$$REGION" \
           --platform managed \
           --allow-unauthenticated \
           --port 8081 \
-          --set-env-vars "PORT=8081,ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,AUTH_SERVICE_URL=${AUTH_URL},ALLOW_ORIGINS=*" \
+          --set-env-vars "PORT=8081,ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,AUTH_SERVICE_URL=$${AUTH_URL},ALLOW_ORIGINS=*" \
           --set-secrets "AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
-        BACKEND_URL="$(gcloud run services describe "${_BACKEND_SERVICE}" --region "$REGION" --format='value(status.url)')"
+        BACKEND_URL="$$(gcloud run services describe "${_BACKEND_SERVICE}" --region "$$REGION" --format='value(status.url)')"
 
         gcloud run deploy "${_FRONTEND_SERVICE}" \
-          --image "$FRONTEND_IMAGE" \
-          --region "$REGION" \
+          --image "$$FRONTEND_IMAGE" \
+          --region "$$REGION" \
           --platform managed \
           --allow-unauthenticated \
           --port 80 \
-          --set-env-vars "BACKEND_UPSTREAM=${BACKEND_URL},AUTH_UPSTREAM=${AUTH_URL}"
+          --set-env-vars "BACKEND_UPSTREAM=$${BACKEND_URL},AUTH_UPSTREAM=$${AUTH_URL}"
 
-        FRONTEND_URL="$(gcloud run services describe "${_FRONTEND_SERVICE}" --region "$REGION" --format='value(status.url)')"
+        FRONTEND_URL="$$(gcloud run services describe "${_FRONTEND_SERVICE}" --region "$$REGION" --format='value(status.url)')"
 
         gcloud run deploy "${_AUTH_SERVICE}" \
-          --image "$AUTH_IMAGE" \
-          --region "$REGION" \
+          --image "$$AUTH_IMAGE" \
+          --region "$$REGION" \
           --platform managed \
           --allow-unauthenticated \
           --port 3001 \
-          --set-env-vars "PORT=3001,BETTER_AUTH_URL=${FRONTEND_URL}" \
+          --set-env-vars "PORT=3001,BETTER_AUTH_URL=$${FRONTEND_URL}" \
           --set-secrets "BETTER_AUTH_SECRET=${_BETTER_AUTH_SECRET_NAME}:latest,GOOGLE_CLIENT_ID=${_GOOGLE_CLIENT_ID_SECRET_NAME}:latest,GOOGLE_CLIENT_SECRET=${_GOOGLE_CLIENT_SECRET_SECRET_NAME}:latest,AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
         gcloud run deploy "${_BACKEND_SERVICE}" \
-          --image "$BACKEND_IMAGE" \
-          --region "$REGION" \
+          --image "$$BACKEND_IMAGE" \
+          --region "$$REGION" \
           --platform managed \
           --allow-unauthenticated \
           --port 8081 \
-          --set-env-vars "PORT=8081,ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,AUTH_SERVICE_URL=${AUTH_URL},ALLOW_ORIGINS=${FRONTEND_URL}" \
+          --set-env-vars "PORT=8081,ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,AUTH_SERVICE_URL=$${AUTH_URL},ALLOW_ORIGINS=$${FRONTEND_URL}" \
           --set-secrets "AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
-        echo "Frontend URL: ${FRONTEND_URL}"
-        echo "Backend URL: ${BACKEND_URL}"
-        echo "Auth URL: ${AUTH_URL}"
+        echo "Frontend URL: $${FRONTEND_URL}"
+        echo "Backend URL: $${BACKEND_URL}"
+        echo "Auth URL: $${AUTH_URL}"
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/${_BACKEND_IMAGE_NAME}:${_IMAGE_TAG}
