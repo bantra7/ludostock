@@ -15,6 +15,7 @@ substitutions:
   _GOOGLE_CLIENT_ID_SECRET_NAME: google-client-id
   _GOOGLE_CLIENT_SECRET_SECRET_NAME: google-client-secret
   _AUTH_INTERNAL_SECRET_NAME: auth-internal-secret
+  _EXTRA_TRUSTED_ORIGINS: https://ludostock-frontend-1015299081216.europe-west1.run.app,https://ludostock-frontend-psztsehj6q-ew.a.run.app
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -90,7 +91,7 @@ steps:
           --platform managed \
           --port 3001 \
           --allow-unauthenticated \
-          --set-env-vars "BETTER_AUTH_URL=https://bootstrap.invalid,TRUSTED_ORIGINS=https://bootstrap.invalid" \
+          --set-env-vars "BETTER_AUTH_URL=https://bootstrap.invalid,TRUSTED_ORIGINS=${_EXTRA_TRUSTED_ORIGINS}" \
           --set-secrets "BETTER_AUTH_SECRET=${_BETTER_AUTH_SECRET_NAME}:latest,GOOGLE_CLIENT_ID=${_GOOGLE_CLIENT_ID_SECRET_NAME}:latest,GOOGLE_CLIENT_SECRET=${_GOOGLE_CLIENT_SECRET_SECRET_NAME}:latest,AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
         AUTH_URL="$$(gcloud run services describe "${_AUTH_SERVICE}" --region "$$REGION" --format='value(status.url)')"
@@ -127,7 +128,7 @@ steps:
           --platform managed \
           --port 3001 \
           --allow-unauthenticated \
-          --set-env-vars "BETTER_AUTH_URL=$${FRONTEND_URL},TRUSTED_ORIGINS=$${FRONTEND_URL}" \
+          --set-env-vars "BETTER_AUTH_URL=$${FRONTEND_URL},TRUSTED_ORIGINS=${_EXTRA_TRUSTED_ORIGINS},$${FRONTEND_URL}" \
           --set-secrets "BETTER_AUTH_SECRET=${_BETTER_AUTH_SECRET_NAME}:latest,GOOGLE_CLIENT_ID=${_GOOGLE_CLIENT_ID_SECRET_NAME}:latest,GOOGLE_CLIENT_SECRET=${_GOOGLE_CLIENT_SECRET_SECRET_NAME}:latest,AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
         gcloud run deploy "${_BACKEND_SERVICE}" \
