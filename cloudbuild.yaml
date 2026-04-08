@@ -88,7 +88,6 @@ steps:
           --image "$$AUTH_IMAGE" \
           --region "$$REGION" \
           --platform managed \
-          --no-invoker-iam-check \
           --port 3001 \
           --set-env-vars "BETTER_AUTH_URL=https://bootstrap.invalid" \
           --set-secrets "BETTER_AUTH_SECRET=${_BETTER_AUTH_SECRET_NAME}:latest,GOOGLE_CLIENT_ID=${_GOOGLE_CLIENT_ID_SECRET_NAME}:latest,GOOGLE_CLIENT_SECRET=${_GOOGLE_CLIENT_SECRET_SECRET_NAME}:latest,AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
@@ -100,7 +99,6 @@ steps:
           --region "$$REGION" \
           --platform managed \
           --execution-environment gen2 \
-          --no-invoker-iam-check \
           --port 8081 \
           --clear-volumes \
           --add-volume "name=sqlite-data,type=cloud-storage,bucket=${_SQLITE_BUCKET},readonly=true" \
@@ -115,7 +113,6 @@ steps:
           --image "$$FRONTEND_IMAGE" \
           --region "$$REGION" \
           --platform managed \
-          --no-invoker-iam-check \
           --port 80 \
           --set-env-vars "BACKEND_UPSTREAM=$${BACKEND_URL},AUTH_UPSTREAM=$${AUTH_URL}"
 
@@ -125,7 +122,6 @@ steps:
           --image "$$AUTH_IMAGE" \
           --region "$$REGION" \
           --platform managed \
-          --no-invoker-iam-check \
           --port 3001 \
           --set-env-vars "BETTER_AUTH_URL=$${FRONTEND_URL}" \
           --set-secrets "BETTER_AUTH_SECRET=${_BETTER_AUTH_SECRET_NAME}:latest,GOOGLE_CLIENT_ID=${_GOOGLE_CLIENT_ID_SECRET_NAME}:latest,GOOGLE_CLIENT_SECRET=${_GOOGLE_CLIENT_SECRET_SECRET_NAME}:latest,AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
@@ -135,7 +131,6 @@ steps:
           --region "$$REGION" \
           --platform managed \
           --execution-environment gen2 \
-          --no-invoker-iam-check \
           --port 8081 \
           --clear-volumes \
           --add-volume "name=sqlite-data,type=cloud-storage,bucket=${_SQLITE_BUCKET},readonly=true" \
