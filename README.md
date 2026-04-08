@@ -129,7 +129,7 @@ The repository now includes a [cloudbuild.yaml](/c:/Users/renau/projects/ludosto
 
 ### Expected GCP resources
 
-- an Artifact Registry Docker repository, for example `ludostock`;
+- an Artifact Registry Docker repository, for example `cloud-run-source-deploy`;
 - three Cloud Run services:
   - `ludostock-frontend`
   - `ludostock-backend`
@@ -140,13 +140,24 @@ The repository now includes a [cloudbuild.yaml](/c:/Users/renau/projects/ludosto
   - `google-client-secret`
   - `auth-internal-secret`
 
+### Required IAM for the build identity
+
+The identity used by Cloud Build must be able to push images to Artifact Registry before the Cloud Run deployment step can start.
+
+At minimum, grant the build service account one of these roles on the project or on the `cloud-run-source-deploy` Artifact Registry repository:
+
+- `roles/artifactregistry.writer`
+- or a broader role that already includes `artifactregistry.repositories.uploadArtifacts`
+
+Recent Google Cloud projects can run builds with the Compute Engine default service account instead of the legacy Cloud Build service account, so verify which principal your trigger is using before granting access.
+
 ### Run Cloud Build
 
 Example:
 
 ```bash
 gcloud builds submit --config cloudbuild.yaml \
-  --substitutions=_REGION=europe-west1,_ARTIFACT_REPOSITORY=ludostock,_IMAGE_TAG=$(git rev-parse --short HEAD),_APP_VERSION=$(cat VERSION)
+  --substitutions=_REGION=europe-west1,_ARTIFACT_REPOSITORY=cloud-run-source-deploy,_IMAGE_TAG=$(git rev-parse --short HEAD),_APP_VERSION=$(cat VERSION)
 ```
 
 ### Important runtime note

@@ -1,6 +1,6 @@
 substitutions:
   _REGION: europe-west1
-  _ARTIFACT_REPOSITORY: ludostock
+  _ARTIFACT_REPOSITORY: cloud-run-source-deploy
   _IMAGE_TAG: latest
   _APP_VERSION: dev
   _BACKEND_SERVICE: ludostock-backend
