@@ -9,9 +9,24 @@ function requireEnv(name: string) {
   return value;
 }
 
+function parseTrustedOrigins() {
+  const rawValue = process.env.TRUSTED_ORIGINS;
+  if (!rawValue) {
+    return undefined;
+  }
+
+  const items = rawValue
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return items.length > 0 ? items : undefined;
+}
+
 export const auth = betterAuth({
   baseURL: requireEnv("BETTER_AUTH_URL"),
   secret: requireEnv("BETTER_AUTH_SECRET"),
+  trustedOrigins: parseTrustedOrigins(),
   socialProviders: {
     google: {
       clientId: requireEnv("GOOGLE_CLIENT_ID"),
