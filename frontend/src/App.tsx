@@ -18,6 +18,7 @@ const REFERENCE_PAGE_SIZE = 25;
 const CATALOG_PAGE_SIZE = 200;
 const GAME_PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
 const FRONTEND_VERSION = __APP_VERSION__;
+const AUTH_SESSION_TIMEOUT_MS = 8000;
 const GAME_SORT_OPTIONS = [
   { value: "name:asc", label: "Nom (A-Z)", sortBy: "name", sortDir: "asc" },
   { value: "name:desc", label: "Nom (Z-A)", sortBy: "name", sortDir: "desc" },
@@ -101,6 +102,22 @@ function createReferenceBooleanMap(initialValue: boolean) {
 function App() {
   const { data: session, error, isPending } = authClient.useSession();
   const [authMessage, setAuthMessage] = useState<FlashMessage | null>(null);
+  const [isSessionCheckStalled, setIsSessionCheckStalled] = useState(false);
+
+  useEffect(() => {
+    if (!isPending) {
+      setIsSessionCheckStalled(false);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setIsSessionCheckStalled(true);
+    }, AUTH_SESSION_TIMEOUT_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [isPending]);
 
   async function signInWithGoogle() {
     setAuthMessage(null);
@@ -123,6 +140,25 @@ function App() {
     }
 
     setAuthMessage(null);
+  }
+
+  function reloadApplication() {
+    window.location.reload();
+  }
+
+  if (isPending && isSessionCheckStalled) {
+    return (
+      <AuthenticationShell
+        actionLabel="Recharger l'application"
+        description="La verification de session prend plus de temps que prevu. Le proxy /api/auth ou le service d'authentification ne repond peut-etre pas encore."
+        message={{
+          tone: "error",
+          text: "Si vous utilisez Docker Compose, verifiez que les services frontend et auth sont bien demarres, puis rechargez la page.",
+        }}
+        onAction={reloadApplication}
+        title="Authentification en attente"
+      />
+    );
   }
 
   if (isPending) {
