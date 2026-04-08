@@ -88,7 +88,7 @@ steps:
           --platform managed \
           --allow-unauthenticated \
           --port 3001 \
-          --set-env-vars "PORT=3001,BETTER_AUTH_URL=https://bootstrap.invalid" \
+          --set-env-vars "BETTER_AUTH_URL=https://bootstrap.invalid" \
           --set-secrets "BETTER_AUTH_SECRET=${_BETTER_AUTH_SECRET_NAME}:latest,GOOGLE_CLIENT_ID=${_GOOGLE_CLIENT_ID_SECRET_NAME}:latest,GOOGLE_CLIENT_SECRET=${_GOOGLE_CLIENT_SECRET_SECRET_NAME}:latest,AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
         AUTH_URL="$$(gcloud run services describe "${_AUTH_SERVICE}" --region "$$REGION" --format='value(status.url)')"
@@ -99,7 +99,7 @@ steps:
           --platform managed \
           --allow-unauthenticated \
           --port 8081 \
-          --set-env-vars "PORT=8081,ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,AUTH_SERVICE_URL=$${AUTH_URL},ALLOW_ORIGINS=*" \
+          --set-env-vars "ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,AUTH_SERVICE_URL=$${AUTH_URL},ALLOW_ORIGINS=*" \
           --set-secrets "AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
         BACKEND_URL="$$(gcloud run services describe "${_BACKEND_SERVICE}" --region "$$REGION" --format='value(status.url)')"
@@ -120,7 +120,7 @@ steps:
           --platform managed \
           --allow-unauthenticated \
           --port 3001 \
-          --set-env-vars "PORT=3001,BETTER_AUTH_URL=$${FRONTEND_URL}" \
+          --set-env-vars "BETTER_AUTH_URL=$${FRONTEND_URL}" \
           --set-secrets "BETTER_AUTH_SECRET=${_BETTER_AUTH_SECRET_NAME}:latest,GOOGLE_CLIENT_ID=${_GOOGLE_CLIENT_ID_SECRET_NAME}:latest,GOOGLE_CLIENT_SECRET=${_GOOGLE_CLIENT_SECRET_SECRET_NAME}:latest,AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
         gcloud run deploy "${_BACKEND_SERVICE}" \
@@ -129,7 +129,7 @@ steps:
           --platform managed \
           --allow-unauthenticated \
           --port 8081 \
-          --set-env-vars "PORT=8081,ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,AUTH_SERVICE_URL=$${AUTH_URL},ALLOW_ORIGINS=$${FRONTEND_URL}" \
+          --set-env-vars "ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,AUTH_SERVICE_URL=$${AUTH_URL},ALLOW_ORIGINS=$${FRONTEND_URL}" \
           --set-secrets "AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
         echo "Frontend URL: $${FRONTEND_URL}"
