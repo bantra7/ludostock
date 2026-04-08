@@ -127,6 +127,8 @@ The repository now includes a [cloudbuild.yaml](/c:/Users/renau/projects/ludosto
 - deploys the three images as three distinct Cloud Run services;
 - wires the frontend proxy to the backend and auth Cloud Run URLs.
 
+Because the frontend proxies `/api` and `/api/auth` directly to the backend and auth Cloud Run service URLs, the current deployment expects those Cloud Run services to allow unauthenticated access. If they stay private, the frontend root URL or proxied API calls can fail with `403 Forbidden`.
+
 ### Expected GCP resources
 
 - an Artifact Registry Docker repository, for example `cloud-run-source-deploy`;
