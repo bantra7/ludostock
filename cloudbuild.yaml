@@ -6,6 +6,8 @@ substitutions:
   _BACKEND_SERVICE: ludostock-backend
   _FRONTEND_SERVICE: ludostock-frontend
   _AUTH_SERVICE: ludostock-auth
+  _SQLITE_BUCKET: ludostock-data
+  _SQLITE_OBJECT_PATH: ludostock.db
   _BACKEND_IMAGE_NAME: backend
   _FRONTEND_IMAGE_NAME: frontend
   _AUTH_IMAGE_NAME: auth
@@ -97,9 +99,14 @@ steps:
           --image "$$BACKEND_IMAGE" \
           --region "$$REGION" \
           --platform managed \
+          --execution-environment gen2 \
           --allow-unauthenticated \
           --port 8081 \
-          --set-env-vars "ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,AUTH_SERVICE_URL=$${AUTH_URL},ALLOW_ORIGINS=*" \
+          --clear-volumes \
+          --add-volume "name=sqlite-data,type=cloud-storage,bucket=${_SQLITE_BUCKET},readonly=true" \
+          --clear-volume-mounts \
+          --add-volume-mount "volume=sqlite-data,mount-path=/mnt/ludostock-data" \
+          --set-env-vars "ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,SQLITE_SEED_PATH=/mnt/ludostock-data/${_SQLITE_OBJECT_PATH},AUTH_SERVICE_URL=$${AUTH_URL},ALLOW_ORIGINS=*" \
           --set-secrets "AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
         BACKEND_URL="$$(gcloud run services describe "${_BACKEND_SERVICE}" --region "$$REGION" --format='value(status.url)')"
@@ -127,9 +134,14 @@ steps:
           --image "$$BACKEND_IMAGE" \
           --region "$$REGION" \
           --platform managed \
+          --execution-environment gen2 \
           --allow-unauthenticated \
           --port 8081 \
-          --set-env-vars "ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,AUTH_SERVICE_URL=$${AUTH_URL},ALLOW_ORIGINS=$${FRONTEND_URL}" \
+          --clear-volumes \
+          --add-volume "name=sqlite-data,type=cloud-storage,bucket=${_SQLITE_BUCKET},readonly=true" \
+          --clear-volume-mounts \
+          --add-volume-mount "volume=sqlite-data,mount-path=/mnt/ludostock-data" \
+          --set-env-vars "ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,SQLITE_SEED_PATH=/mnt/ludostock-data/${_SQLITE_OBJECT_PATH},AUTH_SERVICE_URL=$${AUTH_URL},ALLOW_ORIGINS=$${FRONTEND_URL}" \
           --set-secrets "AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
         echo "Frontend URL: $${FRONTEND_URL}"

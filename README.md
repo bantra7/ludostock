@@ -130,6 +130,7 @@ The repository now includes a [cloudbuild.yaml](/c:/Users/renau/projects/ludosto
 ### Expected GCP resources
 
 - an Artifact Registry Docker repository, for example `cloud-run-source-deploy`;
+- a Cloud Storage bucket containing the SQLite seed file, for example `ludostock-data/ludostock.db`;
 - three Cloud Run services:
   - `ludostock-frontend`
   - `ludostock-backend`
@@ -151,13 +152,17 @@ At minimum, grant the build service account one of these roles on the project or
 
 Recent Google Cloud projects can run builds with the Compute Engine default service account instead of the legacy Cloud Build service account, so verify which principal your trigger is using before granting access.
 
+### Required IAM for the backend runtime identity
+
+The Cloud Run service identity used by `ludostock-backend` must be able to read the mounted bucket. If you keep the default Compute Engine service account, grant it `roles/storage.objectViewer` on the `ludostock-data` bucket.
+
 ### Run Cloud Build
 
 Example:
 
 ```bash
 gcloud builds submit --config cloudbuild.yaml \
-  --substitutions=_REGION=europe-west1,_ARTIFACT_REPOSITORY=cloud-run-source-deploy,_IMAGE_TAG=$(git rev-parse --short HEAD),_APP_VERSION=$(cat VERSION)
+  --substitutions=_REGION=europe-west1,_ARTIFACT_REPOSITORY=cloud-run-source-deploy,_IMAGE_TAG=$(git rev-parse --short HEAD),_APP_VERSION=$(cat VERSION),_SQLITE_BUCKET=ludostock-data,_SQLITE_OBJECT_PATH=ludostock.db
 ```
 
 ### Important runtime note
