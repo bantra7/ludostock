@@ -4,6 +4,8 @@ import { getErrorMessage, joinNames, request } from "./api";
 import { authClient } from "./auth-client";
 import { navItems, referenceEndpoints, referenceNavItems, referenceTitles } from "./types";
 import type {
+  CollectionBoard,
+  CollectionItem,
   Game,
   GamePage,
   NamedEntity,
@@ -15,7 +17,6 @@ import type {
 
 const DEFAULT_GAME_PAGE_SIZE = 50;
 const REFERENCE_PAGE_SIZE = 25;
-const CATALOG_PAGE_SIZE = 200;
 const GAME_PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
 const FRONTEND_VERSION = __APP_VERSION__;
 const AUTH_SESSION_TIMEOUT_MS = 8000;
@@ -64,21 +65,6 @@ function buildGamePagePath(
   }
 
   return `${basePath}?${params.toString()}`;
-}
-
-async function fetchAllCatalogGames() {
-  const items: Game[] = [];
-
-  for (let pageNumber = 1; ; pageNumber += 1) {
-    const page = await request<GamePage>(
-      buildGamePagePath("/games/", pageNumber, CATALOG_PAGE_SIZE, "name:asc", ""),
-    );
-    items.push(...page.items);
-
-    if (items.length >= page.total) {
-      return items;
-    }
-  }
 }
 
 function createReferenceNumberMap(initialValue: number) {
@@ -230,25 +216,11 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   const [gamesRefreshToken, setGamesRefreshToken] = useState(0);
   const [message, setMessage] = useState<FlashMessage | null>(null);
   const deferredSearch = useDeferredValue(search);
-  const [collectionGames, setCollectionGames] = useState<Game[]>([]);
-  const [collectionTotalGames, setCollectionTotalGames] = useState(0);
+  const [collectionBoard, setCollectionBoard] = useState<CollectionBoard | null>(null);
   const [isCollectionLoading, setIsCollectionLoading] = useState(false);
   const [hasLoadedCollectionOnce, setHasLoadedCollectionOnce] = useState(false);
   const [collectionSearch, setCollectionSearch] = useState("");
-  const [collectionCurrentPage, setCollectionCurrentPage] = useState(1);
-  const [collectionPageSize, setCollectionPageSize] = useState<number>(DEFAULT_GAME_PAGE_SIZE);
-  const [collectionSort, setCollectionSort] = useState<GameSortValue>("name:asc");
-  const [collectionRefreshToken, setCollectionRefreshToken] = useState(0);
-  const [catalogGames, setCatalogGames] = useState<Game[]>([]);
-  const [isCatalogLoading, setIsCatalogLoading] = useState(false);
-  const [catalogFilter, setCatalogFilter] = useState("");
-  const [selectedCatalogGameId, setSelectedCatalogGameId] = useState("");
-  const deferredCollectionSearch = useDeferredValue(collectionSearch);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
-  const normalizedCatalogFilter = catalogFilter.trim().toLowerCase();
-  const filteredCatalogGames = normalizedCatalogFilter
-    ? catalogGames.filter((game) => game.name.toLowerCase().includes(normalizedCatalogFilter))
-    : catalogGames;
   const activeNavItem = navItems.find((item) => item.key === activeNav) ?? navItems[0];
   const sectionDescriptions: Record<NavKey, string> = {
     games: "Parcourez et filtrez le catalogue Ludostock.",
@@ -261,10 +233,6 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   }, [deferredSearch, gamePageSize, gameSort]);
 
   useEffect(() => {
-    setCollectionCurrentPage(1);
-  }, [deferredCollectionSearch, collectionPageSize, collectionSort]);
-
-  useEffect(() => {
     void loadGamesPage(currentPage);
   }, [currentPage, deferredSearch, gamePageSize, gameSort, gamesRefreshToken]);
 
@@ -272,49 +240,14 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
     if (activeNav !== "collection") {
       return;
     }
-
-    void loadCollectionPage(collectionCurrentPage);
-  }, [
-    activeNav,
-    collectionCurrentPage,
-    deferredCollectionSearch,
-    collectionPageSize,
-    collectionSort,
-    collectionRefreshToken,
-  ]);
-
-  useEffect(() => {
-    if (activeNav !== "collection" || catalogGames.length > 0 || isCatalogLoading) {
-      return;
-    }
-
-    void loadCatalogGames();
-  }, [activeNav, catalogGames.length, isCatalogLoading]);
+    void loadCollectionBoard();
+  }, [activeNav]);
 
   useEffect(() => {
     if (!hasLoadedOnce && !isGamesLoading) {
       setHasLoadedOnce(true);
     }
   }, [hasLoadedOnce, isGamesLoading]);
-
-  useEffect(() => {
-    if (selectedCatalogGameId || catalogGames.length === 0) {
-      return;
-    }
-
-    setSelectedCatalogGameId(String(catalogGames[0].id));
-  }, [catalogGames, selectedCatalogGameId]);
-
-  useEffect(() => {
-    if (filteredCatalogGames.length === 0) {
-      setSelectedCatalogGameId("");
-      return;
-    }
-
-    if (!filteredCatalogGames.some((game) => String(game.id) === selectedCatalogGameId)) {
-      setSelectedCatalogGameId(String(filteredCatalogGames[0].id));
-    }
-  }, [filteredCatalogGames, selectedCatalogGameId]);
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -360,42 +293,16 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
     }
   }
 
-  async function loadCollectionPage(pageNumber: number) {
+  async function loadCollectionBoard() {
     setIsCollectionLoading(true);
     try {
-      const page = await request<GamePage>(
-        buildGamePagePath(
-          "/me/collection/games/",
-          pageNumber,
-          collectionPageSize,
-          collectionSort,
-          deferredCollectionSearch,
-        ),
-      );
-      if (page.items.length === 0 && page.total > 0 && page.skip >= page.total) {
-        setCollectionCurrentPage(Math.max(1, Math.ceil(page.total / collectionPageSize)));
-        return;
-      }
-
-      setCollectionGames(page.items);
-      setCollectionTotalGames(page.total);
+      const board = await request<CollectionBoard>("/me/collection/board/");
+      setCollectionBoard(board);
     } catch (error) {
       setMessage({ tone: "error", text: getErrorMessage(error) });
     } finally {
       setIsCollectionLoading(false);
       setHasLoadedCollectionOnce(true);
-    }
-  }
-
-  async function loadCatalogGames() {
-    setIsCatalogLoading(true);
-    try {
-      const items = await fetchAllCatalogGames();
-      setCatalogGames(items);
-    } catch (error) {
-      setMessage({ tone: "error", text: getErrorMessage(error) });
-    } finally {
-      setIsCatalogLoading(false);
     }
   }
 
@@ -468,27 +375,22 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
     }
   }
 
-  async function addGameToCollection(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const gameId = Number(selectedCatalogGameId);
-
-    if (!gameId) {
-      setMessage({ tone: "error", text: "Selectionnez un jeu du catalogue a ajouter." });
-      return;
-    }
-
-    const game = catalogGames.find((entry) => entry.id === gameId);
-
+  async function moveCollectionGame(collectionGameId: number, locationId: number | null) {
     try {
-      await request("/me/collection/games/", {
-        method: "POST",
-        body: JSON.stringify({ game_id: gameId, quantity: 1 }),
+      await request(`/me/collection/games/${collectionGameId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ location_id: locationId }),
       });
-      setCollectionRefreshToken((current) => current + 1);
-      setMessage({
-        tone: "success",
-        text: game ? `${game.name} a ete ajoute a votre collection.` : "Le jeu a ete ajoute a votre collection.",
-      });
+      setCollectionBoard((current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((item) =>
+                item.id === collectionGameId ? { ...item, location_id: locationId } : item,
+              ),
+            }
+          : current,
+      );
     } catch (error) {
       setMessage({ tone: "error", text: getErrorMessage(error) });
     }
@@ -533,11 +435,6 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   const totalPages = Math.max(1, Math.ceil(totalGames / gamePageSize));
   const pageStart = totalGames === 0 ? 0 : (currentPage - 1) * gamePageSize + 1;
   const pageEnd = totalGames === 0 ? 0 : Math.min(currentPage * gamePageSize, totalGames);
-  const collectionTotalPages = Math.max(1, Math.ceil(collectionTotalGames / collectionPageSize));
-  const collectionPageStart = collectionTotalGames === 0 ? 0 : (collectionCurrentPage - 1) * collectionPageSize + 1;
-  const collectionPageEnd =
-    collectionTotalGames === 0 ? 0 : Math.min(collectionCurrentPage * collectionPageSize, collectionTotalGames);
-
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -645,29 +542,12 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
 
         {activeNav === "collection" ? (
           <CollectionSection
-            catalogFilter={catalogFilter}
-            catalogGames={filteredCatalogGames}
-            currentPage={collectionCurrentPage}
-            games={collectionGames}
+            board={collectionBoard}
             hasLoadedOnce={hasLoadedCollectionOnce}
-            isCatalogLoading={isCatalogLoading}
             isCollectionLoading={isCollectionLoading}
-            ownerLabel={user.name || user.email || "Utilisateur Google"}
-            pageEnd={collectionPageEnd}
-            pageSize={collectionPageSize}
-            pageStart={collectionPageStart}
             search={collectionSearch}
-            selectedCatalogGameId={selectedCatalogGameId}
-            sortValue={collectionSort}
-            totalGames={collectionTotalGames}
-            totalPages={collectionTotalPages}
-            onAddGame={addGameToCollection}
-            onCatalogFilterChange={setCatalogFilter}
-            onPageChange={setCollectionCurrentPage}
-            onPageSizeChange={setCollectionPageSize}
+            onMoveGame={moveCollectionGame}
             onSearchChange={setCollectionSearch}
-            onSelectedCatalogGameIdChange={setSelectedCatalogGameId}
-            onSortChange={setCollectionSort}
           />
         ) : null}
 
@@ -912,58 +792,28 @@ function GamesSection(props: {
 }
 
 function CollectionSection(props: {
-  catalogFilter: string;
-  catalogGames: Game[];
-  currentPage: number;
-  games: Game[];
+  board: CollectionBoard | null;
   hasLoadedOnce: boolean;
-  isCatalogLoading: boolean;
   isCollectionLoading: boolean;
-  ownerLabel: string;
-  pageEnd: number;
-  pageSize: number;
-  pageStart: number;
   search: string;
-  selectedCatalogGameId: string;
-  sortValue: GameSortValue;
-  totalGames: number;
-  totalPages: number;
-  onAddGame: (event: FormEvent<HTMLFormElement>) => void;
-  onCatalogFilterChange: (value: string) => void;
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (value: number) => void;
+  onMoveGame: (collectionGameId: number, locationId: number | null) => void;
   onSearchChange: (value: string) => void;
-  onSelectedCatalogGameIdChange: (value: string) => void;
-  onSortChange: (value: GameSortValue) => void;
 }) {
-  const [hoveredGameId, setHoveredGameId] = useState<number | null>(null);
   const {
-    catalogFilter,
-    catalogGames,
-    currentPage,
-    games,
+    board,
     hasLoadedOnce,
-    isCatalogLoading,
     isCollectionLoading,
-    ownerLabel,
-    pageEnd,
-    pageSize,
-    pageStart,
     search,
-    selectedCatalogGameId,
-    sortValue,
-    totalGames,
-    totalPages,
-    onAddGame,
-    onCatalogFilterChange,
-    onPageChange,
-    onPageSizeChange,
+    onMoveGame,
     onSearchChange,
-    onSelectedCatalogGameIdChange,
-    onSortChange,
   } = props;
-  const paginationItems = buildPaginationItems(currentPage, totalPages);
-  const resultLabel = totalGames === 0 ? "Aucun resultat" : `${pageStart}-${pageEnd} sur ${totalGames}`;
+  const normalizedSearch = search.trim().toLowerCase();
+  const locations = [{ id: null, name: "Sans lieu" }, ...(board?.locations ?? [])];
+  const items = (board?.items ?? []).filter((item) =>
+    normalizedSearch ? item.game.name.toLowerCase().includes(normalizedSearch) : true,
+  );
+  const totalGames = items.length;
+  const hasBoardStructure = (board?.items.length ?? 0) > 0 || (board?.locations.length ?? 0) > 0;
 
   return (
     <section className="games-layout">
@@ -979,183 +829,148 @@ function CollectionSection(props: {
         </label>
       </section>
 
-      <section className="panel collection-add-panel">
-        <div className="section-intro compact">
-          <h2>Ma collection</h2>
-          <p>Collection personnelle de {ownerLabel}.</p>
-        </div>
-
-        <form className="collection-add-form" onSubmit={onAddGame}>
-          <Field label="Filtrer le catalogue">
-            <input
-              value={catalogFilter}
-              onChange={(event) => onCatalogFilterChange(event.target.value)}
-              placeholder="Rechercher un jeu a ajouter"
-            />
-          </Field>
-
-          <Field label="Jeu a ajouter">
-            <select
-              value={selectedCatalogGameId}
-              onChange={(event) => onSelectedCatalogGameIdChange(event.target.value)}
-              disabled={isCatalogLoading || catalogGames.length === 0}
-            >
-              {catalogGames.length === 0 ? <option value="">Aucun jeu disponible</option> : null}
-              {catalogGames.map((game) => (
-                <option key={game.id} value={String(game.id)}>
-                  {game.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <button
-            type="submit"
-            className="primary-button collection-add-action"
-            disabled={isCatalogLoading || catalogGames.length === 0 || !selectedCatalogGameId}
-          >
-            Ajouter
-          </button>
-        </form>
-
-        {isCatalogLoading ? <p className="collection-helper-copy">Chargement du catalogue de jeux.</p> : null}
-        {!isCatalogLoading && catalogGames.length === 0 ? (
-          <p className="collection-helper-copy">Aucun jeu n'est disponible dans le catalogue pour le moment.</p>
-        ) : null}
-      </section>
-
       <section className="panel games-content">
         <div className="games-controls">
           <div className="games-results-copy" aria-live="polite">
             <strong>{totalGames}</strong>
-            <span>{totalGames > 1 ? "jeux dans ma collection" : "jeu dans ma collection"}</span>
+            <span>{totalGames > 1 ? "jeux visibles dans la collection" : "jeu visible dans la collection"}</span>
           </div>
+        </div>
 
-          <label className="games-inline-control">
-            <span>Trier la liste</span>
-            <select value={sortValue} onChange={(event) => onSortChange(event.target.value as GameSortValue)}>
-              {GAME_SORT_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
+        <div className="collection-board">
+          {!hasLoadedOnce ? (
+            <div className="empty-state">
+              <h3>Chargement</h3>
+              <p>Recuperation de votre collection en cours.</p>
+            </div>
+          ) : isCollectionLoading ? (
+            <div className="empty-state">
+              <h3>Chargement</h3>
+              <p>Mise a jour de votre collection en cours.</p>
+            </div>
+          ) : !hasBoardStructure ? (
+            <div className="empty-state">
+              <h3>Collection vide</h3>
+              <p>Ajoutez un jeu du catalogue pour commencer votre collection.</p>
+            </div>
+          ) : (
+            <>
+              {items.length === 0 && search.trim() ? (
+                <p className="empty-inline">Aucun jeu ne correspond a votre recherche dans les lieux affiches.</p>
+              ) : null}
+              {locations.map((location) => (
+                <CollectionLocationColumn
+                  key={location.id ?? "unassigned"}
+                  items={items.filter((item) => item.location_id === location.id)}
+                  locationName={location.name}
+                  onMoveGame={onMoveGame}
+                  targetLocationId={location.id}
+                />
               ))}
-            </select>
-          </label>
+            </>
+          )}
         </div>
+      </section>
+    </section>
+  );
+}
 
-        <div className="table-shell">
-          <div className="table-head collection-table-head">
-            <div>Nom</div>
-            <div>Type</div>
-            <div>Annee</div>
-            <div>Joueurs</div>
-            <div>Duree</div>
-            <div>Auteurs</div>
-            <div>Editeurs</div>
+function CollectionLocationColumn(props: {
+  items: CollectionItem[];
+  locationName: string;
+  onMoveGame: (collectionGameId: number, locationId: number | null) => void;
+  targetLocationId: number | null;
+}) {
+  const [hoveredGameId, setHoveredGameId] = useState<number | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const { items, locationName, onMoveGame, targetLocationId } = props;
+
+  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDragOver(false);
+    const rawId = event.dataTransfer.getData("text/plain");
+    const collectionGameId = Number(rawId);
+
+    if (!collectionGameId) {
+      return;
+    }
+
+    void onMoveGame(collectionGameId, targetLocationId);
+  }
+
+  return (
+    <section
+      className={`collection-location-column ${isDragOver ? "collection-location-column-active" : ""}`}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        setIsDragOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setIsDragOver(false);
+        }
+      }}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={handleDrop}
+    >
+      <div className="collection-location-header">
+        <div>
+          <h3>{locationName}</h3>
+          <p>{items.length > 1 ? `${items.length} jeux` : `${items.length} jeu`}</p>
+        </div>
+      </div>
+
+      <div className="collection-location-body">
+        {items.length === 0 ? (
+          <div className="empty-state compact">
+            <h3>Vide</h3>
+            <p>Deposez un jeu ici.</p>
           </div>
-
-          <div className="table-body">
-            {!hasLoadedOnce ? (
-              <div className="empty-state">
-                <h3>Chargement</h3>
-                <p>Recuperation de votre collection en cours.</p>
-              </div>
-            ) : isCollectionLoading ? (
-              <div className="empty-state">
-                <h3>Chargement</h3>
-                <p>Mise a jour de votre collection en cours.</p>
-              </div>
-            ) : games.length === 0 ? (
-              <div className="empty-state">
-                <h3>Collection vide</h3>
-                <p>
-                  {search.trim()
-                    ? "Aucun jeu de votre collection ne correspond a cette recherche."
-                    : "Ajoutez un jeu du catalogue pour commencer votre collection."}
-                </p>
-              </div>
-            ) : (
-              games.map((game) => (
-                <div key={game.id} className="table-row collection-table-row">
-                  <GameNameCell
-                    game={game}
-                    isVisible={hoveredGameId === game.id}
-                    onHoverEnd={() => setHoveredGameId((current) => (current === game.id ? null : current))}
-                    onHoverStart={() => setHoveredGameId(game.id)}
-                  />
-                  <div>{game.type || "-"}</div>
-                  <div>{game.creation_year ?? "-"}</div>
-                  <div>{formatPlayers(game)}</div>
-                  <div>{formatDuration(game.duration_minutes)}</div>
-                  <div>{joinNames(game.authors) || "-"}</div>
-                  <div>{joinNames(game.editors) || "-"}</div>
+        ) : (
+          items
+            .slice()
+            .sort((left, right) => left.game.name.localeCompare(right.game.name, "fr"))
+            .map((item) => (
+              <article
+                key={item.id}
+                className="collection-card"
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", String(item.id));
+                }}
+              >
+                <div className="collection-card-media">
+                  {item.game.image_url ? (
+                    <img src={item.game.image_url} alt={item.game.name} loading="lazy" />
+                  ) : (
+                    <div className="collection-card-fallback" aria-hidden="true">
+                      {item.game.name.slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
                 </div>
-              ))
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section className="panel games-footer">
-        <div className="games-footer-meta">
-          <strong>{resultLabel}</strong>
-          <span>{games.length} elements affiches sur cette page.</span>
-        </div>
-
-        <div className="games-pagination" aria-label="Pagination de ma collection">
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={currentPage <= 1 || isCollectionLoading}
-            onClick={() => onPageChange(currentPage - 1)}
-          >
-            Precedent
-          </button>
-
-          <div className="games-pagination-pages">
-            {paginationItems.map((item) =>
-              typeof item === "number" ? (
-                <button
-                  key={item}
-                  type="button"
-                  className={`game-page-button ${item === currentPage ? "active" : ""}`}
-                  disabled={isCollectionLoading}
-                  onClick={() => onPageChange(item)}
-                >
-                  {item}
-                </button>
-              ) : (
-                <span key={item} className="pagination-ellipsis" aria-hidden="true">
-                  ...
-                </span>
-              ),
-            )}
-          </div>
-
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={currentPage >= totalPages || isCollectionLoading}
-            onClick={() => onPageChange(currentPage + 1)}
-          >
-            Suivant
-          </button>
-        </div>
-
-        <label className="games-inline-control games-inline-control-compact">
-          <select
-            aria-label="Nombre d'elements par page"
-            value={String(pageSize)}
-            onChange={(event) => onPageSizeChange(Number(event.target.value))}
-          >
-            {GAME_PAGE_SIZE_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-      </section>
+                <div className="collection-card-title">
+                  <GameNameCell
+                    game={item.game}
+                    isVisible={hoveredGameId === item.id}
+                    onHoverEnd={() => setHoveredGameId((current) => (current === item.id ? null : current))}
+                    onHoverStart={() => setHoveredGameId(item.id)}
+                  />
+                </div>
+                <div className="collection-card-meta">
+                  <span>{item.game.type || "-"}</span>
+                  <span>{item.game.creation_year ?? "-"}</span>
+                </div>
+                <div className="collection-card-facts">
+                  <CompactGameFact kind="players" label="Nombre de joueurs" value={formatPlayers(item.game)} />
+                  <CompactGameFact kind="duration" label="Duree" value={formatDuration(item.game.duration_minutes)} />
+                </div>
+                <p className="collection-card-copy">Auteurs : {joinNames(item.game.authors)}</p>
+                <p className="collection-card-copy">Editeurs : {joinNames(item.game.editors)}</p>
+              </article>
+            ))
+        )}
+      </div>
     </section>
   );
 }

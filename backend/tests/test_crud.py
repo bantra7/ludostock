@@ -191,3 +191,47 @@ def test_add_game_to_personal_collection_rejects_duplicate_game(sqlite_game_stor
         crud.add_game_to_personal_collection(auth_user=auth_user, game_id=azul["id"])
 
     assert exc_info.value.status_code == 409
+
+
+def test_get_personal_collection_board_groups_items_and_locations(sqlite_game_store):
+    azul = crud.create_game(
+        schemas.GameCreate(name="Azul", type="jeu", authors=["Michael Kiesling"], editors=["Next Move"])
+    )
+    patchwork = crud.create_game(
+        schemas.GameCreate(name="Patchwork", type="jeu", authors=["Uwe Rosenberg"], editors=["Lookout Games"])
+    )
+    auth_user = {"name": "Alice Example", "email": "alice@example.com"}
+
+    location = crud.create_personal_location(auth_user=auth_user, name="Chambre")
+    crud.add_game_to_personal_collection(auth_user=auth_user, game_id=azul["id"], location_id=location["id"])
+    crud.add_game_to_personal_collection(auth_user=auth_user, game_id=patchwork["id"])
+
+    board = crud.get_personal_collection_board(auth_user=auth_user)
+
+    assert board["collection_id"] > 0
+    assert [entry["name"] for entry in board["locations"]] == ["Chambre"]
+    assert len(board["items"]) == 2
+    assert {item["game"]["name"] for item in board["items"]} == {"Azul", "Patchwork"}
+    azul_item = next(item for item in board["items"] if item["game"]["name"] == "Azul")
+    patchwork_item = next(item for item in board["items"] if item["game"]["name"] == "Patchwork")
+    assert azul_item["location_id"] == location["id"]
+    assert patchwork_item["location_id"] is None
+
+
+def test_move_personal_collection_game_updates_location(sqlite_game_store):
+    azul = crud.create_game(
+        schemas.GameCreate(name="Azul", type="jeu", authors=["Michael Kiesling"], editors=["Next Move"])
+    )
+    auth_user = {"name": "Alice Example", "email": "alice@example.com"}
+
+    location = crud.create_personal_location(auth_user=auth_user, name="Maison 2")
+    collection_game = crud.add_game_to_personal_collection(auth_user=auth_user, game_id=azul["id"])
+
+    moved = crud.move_personal_collection_game(
+        auth_user=auth_user,
+        collection_game_id=collection_game["id"],
+        location_id=location["id"],
+    )
+
+    assert moved["id"] == collection_game["id"]
+    assert moved["location_id"] == location["id"]

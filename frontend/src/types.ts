@@ -31,6 +31,27 @@ export type GamePage = {
   limit: number;
 };
 
+export type UserLocation = {
+  id: number;
+  user_id: string;
+  name: string;
+};
+
+export type CollectionItem = {
+  id: number;
+  collection_id: number;
+  game_id: number;
+  location_id: number | null;
+  quantity: number | null;
+  game: Game;
+};
+
+export type CollectionBoard = {
+  collection_id: number;
+  locations: UserLocation[];
+  items: CollectionItem[];
+};
+
 export type GameFormState = {
   name: string;
   type: string;

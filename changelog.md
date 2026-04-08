@@ -1,3 +1,11 @@
+### 1.3.0 (2026-04-08)
+
+* Refonte de l'onglet `Ma collection` pour afficher une vue par lieux avec colonnes dediees.
+* Ajout de la gestion des lieux personnels dans la collection, avec endpoints backend pour creer un lieu, recuperer le board personnel et deplacer un jeu entre lieux.
+* Ajout du drag-and-drop des jeux entre lieux dans l'interface.
+* Mise en avant de la vignette et du nom des jeux dans les cartes de collection, avec simplification de l'en-tete pour ne conserver que la recherche.
+* Extension des tests backend pour couvrir le board personnel, la creation de lieux et le deplacement des jeux.
+
 ### 1.2.0 (2026-04-07)
 
 * Ajout d'un pipeline `cloudbuild.yaml` pour construire, publier et deployer les services `backend`, `frontend` et `auth` sur GCP/Cloud Run.

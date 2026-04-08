@@ -412,6 +412,45 @@ def _get_collection_game_by_identity(
     return _row_to_dict(row)
 
 
+def _get_collection_game_by_game_id(collection_id: int, game_id: int) -> dict[str, Any] | None:
+    """Fetch the first collection game matching a collection and game id."""
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT *
+            FROM collection_games
+            WHERE collection_id = ? AND game_id = ?
+            LIMIT 1
+            """,
+            (collection_id, game_id),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def _get_user_location_for_user(user_id: str, location_id: int) -> dict[str, Any] | None:
+    """Return a location only when it belongs to the given user."""
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT *
+            FROM user_locations
+            WHERE id = ? AND user_id = ?
+            LIMIT 1
+            """,
+            (location_id, user_id),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def _require_personal_location(user_id: str, location_id: int | None) -> None:
+    """Validate that an optional location belongs to the authenticated user."""
+    if location_id is None:
+        return
+
+    if _get_user_location_for_user(user_id, location_id) is None:
+        raise HTTPException(status_code=404, detail="User location not found")
+
+
 def get_games(skip: int = 0, limit: int = 100):
     """Return paginated games with their related contributors."""
     game_rows = _fetch_paginated_rows("games", skip=skip, limit=limit)
@@ -832,28 +871,133 @@ def get_personal_collection_games(
     }
 
 
+def get_personal_collection_board(auth_user: dict[str, Any]) -> dict[str, Any]:
+    """Return the authenticated user's collection board with locations and game rows."""
+    user = _get_or_create_authenticated_user(auth_user)
+    collection = _get_or_create_personal_collection(auth_user)
+
+    with get_connection() as connection:
+        location_rows = _rows_to_dicts(
+            connection.execute(
+                """
+                SELECT *
+                FROM user_locations
+                WHERE user_id = ?
+                ORDER BY LOWER(name) ASC, id ASC
+                """,
+                (str(user["id"]),),
+            ).fetchall()
+        )
+        collection_game_rows = _rows_to_dicts(
+            connection.execute(
+                """
+                SELECT *
+                FROM collection_games
+                WHERE collection_id = ?
+                ORDER BY id ASC
+                """,
+                (collection["id"],),
+            ).fetchall()
+        )
+
+    game_ids = [row["game_id"] for row in collection_game_rows]
+    game_rows = _fetch_rows_by_ids("games", game_ids)
+    relations = _load_game_relations([row["id"] for row in game_rows])
+    games_by_id = {row["id"]: _serialize_game(row, relations) for row in game_rows}
+
+    items = [
+        {
+            **row,
+            "game": games_by_id[row["game_id"]],
+        }
+        for row in collection_game_rows
+        if row["game_id"] in games_by_id
+    ]
+
+    return {
+        "collection_id": collection["id"],
+        "locations": location_rows,
+        "items": items,
+    }
+
+
 def get_collection_game(collection_game_id: int):
     """Return a single collection game."""
     return _fetch_row("collection_games", collection_game_id)
 
 
-def add_game_to_personal_collection(auth_user: dict[str, Any], game_id: int, quantity: int = 1):
+def add_game_to_personal_collection(
+    auth_user: dict[str, Any],
+    game_id: int,
+    quantity: int = 1,
+    location_id: int | None = None,
+):
     """Add a catalog game to the authenticated user's collection."""
+    user = _get_or_create_authenticated_user(auth_user)
     collection = _get_or_create_personal_collection(auth_user)
+    _require_personal_location(str(user["id"]), location_id)
 
     if get_game(game_id) is None:
         raise HTTPException(status_code=404, detail="Game not found")
 
-    if _get_collection_game_by_identity(collection["id"], game_id) is not None:
+    if _get_collection_game_by_game_id(collection["id"], game_id) is not None:
         raise HTTPException(status_code=409, detail="Game is already present in the personal collection")
 
     return create_collection_game(
         schemas.CollectionGameCreate(
             collection_id=collection["id"],
             game_id=game_id,
+            location_id=location_id,
             quantity=quantity,
         )
     )
+
+
+def create_personal_location(auth_user: dict[str, Any], name: str) -> dict[str, Any]:
+    """Create a location owned by the authenticated user."""
+    user = _get_or_create_authenticated_user(auth_user)
+    cleaned_name = name.strip()
+    if not cleaned_name:
+        raise HTTPException(status_code=400, detail="Location name is required")
+
+    return create_user_location(
+        schemas.UserLocationCreate(
+            user_id=UUID(str(user["id"])),
+            name=cleaned_name,
+        )
+    )
+
+
+def move_personal_collection_game(
+    auth_user: dict[str, Any],
+    collection_game_id: int,
+    location_id: int | None = None,
+) -> dict[str, Any]:
+    """Move an existing personal collection game to another location."""
+    user = _get_or_create_authenticated_user(auth_user)
+    collection = _get_or_create_personal_collection(auth_user)
+    collection_game = get_collection_game(collection_game_id)
+
+    if collection_game is None or collection_game["collection_id"] != collection["id"]:
+        raise HTTPException(status_code=404, detail="Collection game not found")
+
+    _require_personal_location(str(user["id"]), location_id)
+
+    existing = _get_collection_game_by_identity(collection["id"], collection_game["game_id"], location_id)
+    if existing is not None and existing["id"] != collection_game_id:
+        raise HTTPException(status_code=409, detail="Game is already present in the target location")
+
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE collection_games SET location_id = ? WHERE id = ?",
+            (location_id, collection_game_id),
+        )
+        connection.commit()
+
+    updated = get_collection_game(collection_game_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Collection game not found")
+    return updated
 
 
 def create_collection_game(collection_game: schemas.CollectionGameCreate):

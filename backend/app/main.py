@@ -284,6 +284,12 @@ def get_my_collection_games(
     )
 
 
+@app.get("/api/me/collection/board/", response_model=schemas.PersonalCollectionBoard, tags=["Collections"])
+def get_my_collection_board(request: Request):
+    """Return the authenticated user's collection board grouped by locations."""
+    return crud.get_personal_collection_board(auth_user=request.state.user)
+
+
 @app.post("/api/me/collection/games/", response_model=schemas.CollectionGame, tags=["Collections"])
 def add_game_to_my_collection(request: Request, payload: schemas.PersonalCollectionGameCreate):
     """Add a catalog game to the authenticated user's personal collection."""
@@ -291,7 +297,24 @@ def add_game_to_my_collection(request: Request, payload: schemas.PersonalCollect
         auth_user=request.state.user,
         game_id=payload.game_id,
         quantity=payload.quantity or 1,
+        location_id=payload.location_id,
     )
+
+
+@app.patch("/api/me/collection/games/{collection_game_id}", response_model=schemas.CollectionGame, tags=["Collections"])
+def move_game_in_my_collection(request: Request, collection_game_id: int, payload: schemas.CollectionGameUpdate):
+    """Move an existing collection game to another location."""
+    return crud.move_personal_collection_game(
+        auth_user=request.state.user,
+        collection_game_id=collection_game_id,
+        location_id=payload.location_id,
+    )
+
+
+@app.post("/api/me/collection/locations/", response_model=schemas.UserLocation, tags=["Collections"])
+def create_location_in_my_collection(request: Request, payload: schemas.PersonalLocationCreate):
+    """Create a location for the authenticated user's collection."""
+    return crud.create_personal_location(auth_user=request.state.user, name=payload.name)
 
 
 @app.get("/api/collections/{collection_id}", response_model=schemas.Collection, tags=["Collections"])

@@ -161,6 +161,13 @@ class PersonalCollectionGameCreate(CollectionGameBase):
     """Payload used to add a game to the authenticated user's collection."""
 
     game_id: int
+    location_id: Optional[int] = None
+
+
+class CollectionGameUpdate(OrmSchema):
+    """Payload used to update an existing collection game."""
+
+    location_id: Optional[int] = None
 
 
 class CollectionGame(CollectionGameBase):
@@ -170,6 +177,12 @@ class CollectionGame(CollectionGameBase):
     collection_id: int
     game_id: int
     location_id: Optional[int] = None
+
+
+class PersonalCollectionItem(CollectionGame):
+    """Collection game enriched with the linked catalog game."""
+
+    game: Game
 
 
 class CollectionShareBase(OrmSchema):
@@ -232,3 +245,15 @@ class UserLocation(UserLocationBase):
 
     id: int
     user_id: UUID
+
+
+class PersonalLocationCreate(UserLocationBase):
+    """Payload used to create a location for the authenticated user."""
+
+
+class PersonalCollectionBoard(OrmSchema):
+    """Authenticated user's collection grouped by locations."""
+
+    collection_id: int
+    locations: List[UserLocation] = Field(default_factory=list)
+    items: List[PersonalCollectionItem] = Field(default_factory=list)
