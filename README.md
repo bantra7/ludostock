@@ -127,6 +127,12 @@ The repository now includes a [cloudbuild.yaml](/c:/Users/renau/projects/ludosto
 - deploys the three images as three distinct Cloud Run services;
 - wires the frontend proxy to the backend and auth Cloud Run URLs.
 
+The public production origin is `https://ludostock.com`. In that setup, point the domain to the `ludostock-frontend` service only:
+
+- `https://ludostock.com` serves the React frontend;
+- `https://ludostock.com/api/*` is proxied by the frontend Nginx container to the FastAPI backend;
+- `https://ludostock.com/api/auth/*` is proxied by the frontend Nginx container to the Better Auth service.
+
 Because the frontend proxies `/api` and `/api/auth` directly to the backend and auth Cloud Run service URLs, the current deployment expects those Cloud Run services to allow unauthenticated access. If they stay private, the frontend root URL or proxied API calls can fail with `403 Forbidden`.
 
 ### Expected GCP resources
@@ -164,8 +170,35 @@ Example:
 
 ```bash
 gcloud builds submit --config cloudbuild.yaml \
-  --substitutions=_REGION=europe-west1,_ARTIFACT_REPOSITORY=cloud-run-source-deploy,_IMAGE_TAG=$(git rev-parse --short HEAD),_APP_VERSION=$(cat VERSION),_SQLITE_BUCKET=ludostock-data,_SQLITE_OBJECT_PATH=ludostock.db
+  --substitutions=_REGION=europe-west1,_ARTIFACT_REPOSITORY=cloud-run-source-deploy,_IMAGE_TAG=$(git rev-parse --short HEAD),_APP_VERSION=$(cat VERSION),_SQLITE_BUCKET=ludostock-data,_SQLITE_OBJECT_PATH=ludostock.db,_PUBLIC_ORIGIN=https://ludostock.com
 ```
+
+### Connect ludostock.com
+
+After the `ludostock-frontend` Cloud Run service exists, map the apex domain to that frontend service. The backend does not need a separate public domain because the frontend container proxies `/api`.
+
+Quick Cloud Run domain mapping:
+
+```bash
+gcloud domains list-user-verified
+gcloud beta run domain-mappings create \
+  --service ludostock-frontend \
+  --domain ludostock.com \
+  --region europe-west1
+gcloud beta run domain-mappings describe \
+  --domain ludostock.com \
+  --region europe-west1
+```
+
+Add every DNS record returned under `resourceRecords` to the DNS zone that serves `ludostock.com`. If the domain is using Cloud DNS name servers, add them in the corresponding Cloud DNS zone; if it is still using another provider's name servers, add them there.
+
+For Google OAuth, add this authorized redirect URI in the Google Cloud OAuth client:
+
+```text
+https://ludostock.com/api/auth/callback/google
+```
+
+Cloud Run domain mappings are a convenient shortcut. For a production-grade Google Cloud setup, Google recommends an external Application Load Balancer in front of Cloud Run.
 
 ### Important runtime note
 
