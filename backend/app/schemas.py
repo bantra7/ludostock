@@ -46,6 +46,10 @@ class AuthorCreate(AuthorBase):
     """Payload used to create an author."""
 
 
+class AuthorUpdate(AuthorBase):
+    """Payload used to update an author."""
+
+
 class Author(AuthorBase):
     """Author response schema."""
 
@@ -60,6 +64,10 @@ class ArtistBase(OrmSchema):
 
 class ArtistCreate(ArtistBase):
     """Payload used to create an artist."""
+
+
+class ArtistUpdate(ArtistBase):
+    """Payload used to update an artist."""
 
 
 class Artist(ArtistBase):
@@ -78,6 +86,10 @@ class EditorCreate(EditorBase):
     """Payload used to create an editor."""
 
 
+class EditorUpdate(EditorBase):
+    """Payload used to update an editor."""
+
+
 class Editor(EditorBase):
     """Editor response schema."""
 
@@ -92,6 +104,10 @@ class DistributorBase(OrmSchema):
 
 class DistributorCreate(DistributorBase):
     """Payload used to create a distributor."""
+
+
+class DistributorUpdate(DistributorBase):
+    """Payload used to update a distributor."""
 
 
 class Distributor(DistributorBase):
@@ -249,6 +265,10 @@ class UserLocation(UserLocationBase):
 
 class PersonalLocationCreate(UserLocationBase):
     """Payload used to create a location for the authenticated user."""
+
+
+class PersonalLocationUpdate(UserLocationBase):
+    """Payload used to rename a location for the authenticated user."""
 
 
 class PersonalCollectionBoard(OrmSchema):

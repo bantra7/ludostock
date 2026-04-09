@@ -146,6 +146,15 @@ def test_get_games_page_sorts_by_author_and_numeric_fields(sqlite_game_store):
     assert [game["name"] for game in duration_sorted_page["items"]] == ["Patchwork", "Azul", "Cascadia"]
 
 
+def test_update_author_renames_reference(sqlite_game_store):
+    author = crud.create_author(schemas.AuthorCreate(name="Wolfgang Kramer"))
+
+    updated = crud.update_author(author["id"], schemas.AuthorUpdate(name="Wolfgang Kramer et Michael Kiesling"))
+
+    assert updated == {"id": author["id"], "name": "Wolfgang Kramer et Michael Kiesling"}
+    assert crud.get_author(author["id"]) == updated
+
+
 def test_get_personal_collection_games_creates_user_collection_and_filters(sqlite_game_store):
     azul = crud.create_game(
         schemas.GameCreate(name="Azul", type="jeu", authors=["Michael Kiesling"], editors=["Next Move"])
@@ -235,3 +244,60 @@ def test_move_personal_collection_game_updates_location(sqlite_game_store):
 
     assert moved["id"] == collection_game["id"]
     assert moved["location_id"] == location["id"]
+
+
+def test_update_personal_location_renames_owned_location(sqlite_game_store):
+    alice = {"name": "Alice Example", "email": "alice@example.com"}
+    bob = {"name": "Bob Example", "email": "bob@example.com"}
+    location = crud.create_personal_location(auth_user=alice, name="Chambre")
+
+    with pytest.raises(HTTPException) as exc_info:
+        crud.update_personal_location(auth_user=bob, location_id=location["id"], name="Salon")
+
+    updated = crud.update_personal_location(auth_user=alice, location_id=location["id"], name=" Salon ")
+    board = crud.get_personal_collection_board(auth_user=alice)
+
+    assert exc_info.value.status_code == 404
+    assert updated["name"] == "Salon"
+    assert [entry["name"] for entry in board["locations"]] == ["Salon"]
+
+
+def test_delete_personal_location_removes_owned_location_and_unassigns_games(sqlite_game_store):
+    azul = crud.create_game(
+        schemas.GameCreate(name="Azul", type="jeu", authors=["Michael Kiesling"], editors=["Next Move"])
+    )
+    alice = {"name": "Alice Example", "email": "alice@example.com"}
+    bob = {"name": "Bob Example", "email": "bob@example.com"}
+    location = crud.create_personal_location(auth_user=alice, name="Chambre")
+    crud.add_game_to_personal_collection(auth_user=alice, game_id=azul["id"], location_id=location["id"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        crud.delete_personal_location(auth_user=bob, location_id=location["id"])
+
+    deleted = crud.delete_personal_location(auth_user=alice, location_id=location["id"])
+    board = crud.get_personal_collection_board(auth_user=alice)
+
+    assert exc_info.value.status_code == 404
+    assert deleted["id"] == location["id"]
+    assert board["locations"] == []
+    assert board["items"][0]["location_id"] is None
+
+
+def test_remove_game_from_personal_collection_only_removes_owned_game(sqlite_game_store):
+    azul = crud.create_game(
+        schemas.GameCreate(name="Azul", type="jeu", authors=["Michael Kiesling"], editors=["Next Move"])
+    )
+    alice = {"name": "Alice Example", "email": "alice@example.com"}
+    bob = {"name": "Bob Example", "email": "bob@example.com"}
+
+    alice_item = crud.add_game_to_personal_collection(auth_user=alice, game_id=azul["id"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        crud.remove_game_from_personal_collection(auth_user=bob, collection_game_id=alice_item["id"])
+
+    deleted = crud.remove_game_from_personal_collection(auth_user=alice, collection_game_id=alice_item["id"])
+    board = crud.get_personal_collection_board(auth_user=alice)
+
+    assert exc_info.value.status_code == 404
+    assert deleted["id"] == alice_item["id"]
+    assert board["items"] == []

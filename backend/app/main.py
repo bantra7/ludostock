@@ -122,6 +122,15 @@ def get_author(author_id: int):
     return db_author
 
 
+@app.patch("/api/authors/{author_id}", response_model=schemas.Author, tags=["Authors"])
+def update_author(author_id: int, author: schemas.AuthorUpdate):
+    """Update an author."""
+    db_author = crud.update_author(author_id=author_id, author=author)
+    if db_author is None:
+        raise HTTPException(status_code=404, detail="Author not found")
+    return db_author
+
+
 @app.delete("/api/authors/{author_id}", response_model=schemas.Author, tags=["Authors"])
 def delete_author(author_id: int):
     """Delete an author."""
@@ -147,6 +156,15 @@ def get_artists(skip: int = 0, limit: int = 100):
 def get_artist(artist_id: int):
     """Get an artist by id."""
     db_artist = crud.get_artist(artist_id=artist_id)
+    if db_artist is None:
+        raise HTTPException(status_code=404, detail="Artist not found")
+    return db_artist
+
+
+@app.patch("/api/artists/{artist_id}", response_model=schemas.Artist, tags=["Artists"])
+def update_artist(artist_id: int, artist: schemas.ArtistUpdate):
+    """Update an artist."""
+    db_artist = crud.update_artist(artist_id=artist_id, artist=artist)
     if db_artist is None:
         raise HTTPException(status_code=404, detail="Artist not found")
     return db_artist
@@ -182,6 +200,15 @@ def get_editor(editor_id: int):
     return db_editor
 
 
+@app.patch("/api/editors/{editor_id}", response_model=schemas.Editor, tags=["Editors"])
+def update_editor(editor_id: int, editor: schemas.EditorUpdate):
+    """Update an editor."""
+    db_editor = crud.update_editor(editor_id=editor_id, editor=editor)
+    if db_editor is None:
+        raise HTTPException(status_code=404, detail="Editor not found")
+    return db_editor
+
+
 @app.delete("/api/editors/{editor_id}", response_model=schemas.Editor, tags=["Editors"])
 def delete_editor(editor_id: int):
     """Delete an editor."""
@@ -207,6 +234,15 @@ def get_distributors(skip: int = 0, limit: int = 100):
 def get_distributor(distributor_id: int):
     """Get a distributor by id."""
     db_distributor = crud.get_distributor(distributor_id=distributor_id)
+    if db_distributor is None:
+        raise HTTPException(status_code=404, detail="Distributor not found")
+    return db_distributor
+
+
+@app.patch("/api/distributors/{distributor_id}", response_model=schemas.Distributor, tags=["Distributors"])
+def update_distributor(distributor_id: int, distributor: schemas.DistributorUpdate):
+    """Update a distributor."""
+    db_distributor = crud.update_distributor(distributor_id=distributor_id, distributor=distributor)
     if db_distributor is None:
         raise HTTPException(status_code=404, detail="Distributor not found")
     return db_distributor
@@ -314,10 +350,35 @@ def move_game_in_my_collection(request: Request, collection_game_id: int, payloa
     )
 
 
+@app.delete("/api/me/collection/games/{collection_game_id}", response_model=schemas.CollectionGame, tags=["Collections"])
+def remove_game_from_my_collection(request: Request, collection_game_id: int):
+    """Remove a game from the authenticated user's personal collection."""
+    return crud.remove_game_from_personal_collection(
+        auth_user=request.state.user,
+        collection_game_id=collection_game_id,
+    )
+
+
 @app.post("/api/me/collection/locations/", response_model=schemas.UserLocation, tags=["Collections"])
 def create_location_in_my_collection(request: Request, payload: schemas.PersonalLocationCreate):
     """Create a location for the authenticated user's collection."""
     return crud.create_personal_location(auth_user=request.state.user, name=payload.name)
+
+
+@app.patch("/api/me/collection/locations/{location_id}", response_model=schemas.UserLocation, tags=["Collections"])
+def update_location_in_my_collection(request: Request, location_id: int, payload: schemas.PersonalLocationUpdate):
+    """Rename a location in the authenticated user's collection."""
+    return crud.update_personal_location(
+        auth_user=request.state.user,
+        location_id=location_id,
+        name=payload.name,
+    )
+
+
+@app.delete("/api/me/collection/locations/{location_id}", response_model=schemas.UserLocation, tags=["Collections"])
+def delete_location_in_my_collection(request: Request, location_id: int):
+    """Delete a location in the authenticated user's collection."""
+    return crud.delete_personal_location(auth_user=request.state.user, location_id=location_id)
 
 
 @app.get("/api/collections/{collection_id}", response_model=schemas.Collection, tags=["Collections"])

@@ -12,6 +12,7 @@ def test_app_registers_game_routes():
     assert "/api/collections/" in paths
     assert "/api/me/collection/games/" in paths
     assert "/api/me/collection/board/" in paths
+    assert "/api/authors/{author_id}" in paths
 
 
 def test_get_games_delegates_to_paginated_crud(monkeypatch):
@@ -51,6 +52,27 @@ def test_get_version_returns_backend_metadata():
     assert response == {"name": "backend", "version": main.__version__}
 
 
+def test_update_author_delegates_to_crud(monkeypatch):
+    captured = {}
+
+    def fake_update_author(**kwargs):
+        captured.update(kwargs)
+        return {"id": kwargs["author_id"], "name": kwargs["author"].name}
+
+    monkeypatch.setattr(main.crud, "update_author", fake_update_author)
+
+    response = main.update_author(
+        author_id=4,
+        author=main.schemas.AuthorUpdate(name="Renamed Author"),
+    )
+
+    assert response == {"id": 4, "name": "Renamed Author"}
+    assert captured == {
+        "author_id": 4,
+        "author": main.schemas.AuthorUpdate(name="Renamed Author"),
+    }
+
+
 def test_admin_email_is_case_insensitive():
     assert auth.is_admin_user({"email": "RENAULT.JBAPT@GMAIL.COM"})
     assert not auth.is_admin_user({"email": "alice@example.com"})
@@ -60,6 +82,8 @@ def test_admin_email_is_case_insensitive():
 def test_admin_guard_allows_personal_collection_and_catalog_reads():
     assert not auth.requires_admin_access("/api/me/collection/games/", "POST")
     assert not auth.requires_admin_access("/api/me/collection/locations/", "POST")
+    assert not auth.requires_admin_access("/api/me/collection/locations/4", "PATCH")
+    assert not auth.requires_admin_access("/api/me/collection/locations/4", "DELETE")
     assert not auth.requires_admin_access("/api/games/", "GET")
     assert not auth.requires_admin_access("/api/authors/1", "GET")
 
@@ -68,6 +92,7 @@ def test_admin_guard_protects_global_catalog_writes_and_legacy_collection_routes
     assert auth.requires_admin_access("/api/games/", "POST")
     assert auth.requires_admin_access("/api/games/1", "DELETE")
     assert auth.requires_admin_access("/api/authors/", "POST")
+    assert auth.requires_admin_access("/api/authors/1", "PATCH")
     assert auth.requires_admin_access("/api/collections/", "GET")
     assert auth.requires_admin_access("/api/collection_games/1", "DELETE")
 
@@ -168,6 +193,25 @@ def test_move_game_in_my_collection_delegates_to_crud(monkeypatch):
     }
 
 
+def test_remove_game_from_my_collection_delegates_to_crud(monkeypatch):
+    captured = {}
+    request = SimpleNamespace(state=SimpleNamespace(user={"name": "Alice", "email": "alice@example.com"}))
+
+    def fake_remove_game_from_personal_collection(**kwargs):
+        captured.update(kwargs)
+        return {"id": 3, "collection_id": 2, "game_id": 4, "location_id": None, "quantity": 1}
+
+    monkeypatch.setattr(main.crud, "remove_game_from_personal_collection", fake_remove_game_from_personal_collection)
+
+    response = main.remove_game_from_my_collection(request=request, collection_game_id=3)
+
+    assert response["id"] == 3
+    assert captured == {
+        "auth_user": {"name": "Alice", "email": "alice@example.com"},
+        "collection_game_id": 3,
+    }
+
+
 def test_create_location_in_my_collection_delegates_to_crud(monkeypatch):
     captured = {}
     request = SimpleNamespace(state=SimpleNamespace(user={"name": "Alice", "email": "alice@example.com"}))
@@ -187,4 +231,47 @@ def test_create_location_in_my_collection_delegates_to_crud(monkeypatch):
     assert captured == {
         "auth_user": {"name": "Alice", "email": "alice@example.com"},
         "name": "Chambre",
+    }
+
+
+def test_update_location_in_my_collection_delegates_to_crud(monkeypatch):
+    captured = {}
+    request = SimpleNamespace(state=SimpleNamespace(user={"name": "Alice", "email": "alice@example.com"}))
+
+    def fake_update_personal_location(**kwargs):
+        captured.update(kwargs)
+        return {"id": kwargs["location_id"], "user_id": "abc", "name": kwargs["name"]}
+
+    monkeypatch.setattr(main.crud, "update_personal_location", fake_update_personal_location)
+
+    response = main.update_location_in_my_collection(
+        request=request,
+        location_id=7,
+        payload=main.schemas.PersonalLocationUpdate(name="Salon"),
+    )
+
+    assert response["name"] == "Salon"
+    assert captured == {
+        "auth_user": {"name": "Alice", "email": "alice@example.com"},
+        "location_id": 7,
+        "name": "Salon",
+    }
+
+
+def test_delete_location_in_my_collection_delegates_to_crud(monkeypatch):
+    captured = {}
+    request = SimpleNamespace(state=SimpleNamespace(user={"name": "Alice", "email": "alice@example.com"}))
+
+    def fake_delete_personal_location(**kwargs):
+        captured.update(kwargs)
+        return {"id": kwargs["location_id"], "user_id": "abc", "name": "Salon"}
+
+    monkeypatch.setattr(main.crud, "delete_personal_location", fake_delete_personal_location)
+
+    response = main.delete_location_in_my_collection(request=request, location_id=7)
+
+    assert response["id"] == 7
+    assert captured == {
+        "auth_user": {"name": "Alice", "email": "alice@example.com"},
+        "location_id": 7,
     }

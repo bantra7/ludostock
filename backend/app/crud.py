@@ -169,6 +169,23 @@ def _delete_row(table: str, row_id: Any) -> dict[str, Any] | None:
     return row
 
 
+def _update_named_row(table: str, row_id: Any, name: str, duplicate_message: str) -> dict[str, Any] | None:
+    """Update a named row and return the updated payload when present."""
+    if _fetch_row(table, row_id) is None:
+        return None
+
+    with get_connection() as connection:
+        try:
+            connection.execute(
+                f"UPDATE {table} SET name = ? WHERE id = ?",
+                (name, row_id),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as exc:
+            _raise_write_error(exc, duplicate_message)
+    return _fetch_row(table, row_id)
+
+
 def _fetch_rows_by_ids(table: str, ids: list[Any]) -> list[dict[str, Any]]:
     """Fetch rows by a list of ids."""
     if not ids:
@@ -560,6 +577,11 @@ def create_author(author: schemas.AuthorCreate):
     return {"id": cursor.lastrowid, "name": author.name}
 
 
+def update_author(author_id: int, author: schemas.AuthorUpdate):
+    """Update an author."""
+    return _update_named_row("authors", author_id, author.name, "Author with this name already exists")
+
+
 def delete_author(author_id: int):
     """Delete an author."""
     return _delete_row("authors", author_id)
@@ -587,6 +609,11 @@ def create_artist(artist: schemas.ArtistCreate):
         except sqlite3.IntegrityError as exc:
             _raise_write_error(exc, "Artist with this name already exists")
     return {"id": cursor.lastrowid, "name": artist.name}
+
+
+def update_artist(artist_id: int, artist: schemas.ArtistUpdate):
+    """Update an artist."""
+    return _update_named_row("artists", artist_id, artist.name, "Artist with this name already exists")
 
 
 def delete_artist(artist_id: int):
@@ -618,6 +645,11 @@ def create_editor(editor: schemas.EditorCreate):
     return {"id": cursor.lastrowid, "name": editor.name}
 
 
+def update_editor(editor_id: int, editor: schemas.EditorUpdate):
+    """Update an editor."""
+    return _update_named_row("editors", editor_id, editor.name, "Editor with this name already exists")
+
+
 def delete_editor(editor_id: int):
     """Delete an editor."""
     return _delete_row("editors", editor_id)
@@ -645,6 +677,16 @@ def create_distributor(distributor: schemas.DistributorCreate):
         except sqlite3.IntegrityError as exc:
             _raise_write_error(exc, "Distributor with this name already exists")
     return {"id": cursor.lastrowid, "name": distributor.name}
+
+
+def update_distributor(distributor_id: int, distributor: schemas.DistributorUpdate):
+    """Update a distributor."""
+    return _update_named_row(
+        "distributors",
+        distributor_id,
+        distributor.name,
+        "Distributor with this name already exists",
+    )
 
 
 def delete_distributor(distributor_id: int):
@@ -968,6 +1010,45 @@ def create_personal_location(auth_user: dict[str, Any], name: str) -> dict[str, 
     )
 
 
+def update_personal_location(auth_user: dict[str, Any], location_id: int, name: str) -> dict[str, Any]:
+    """Rename a location owned by the authenticated user."""
+    user = _get_or_create_authenticated_user(auth_user)
+    cleaned_name = name.strip()
+    if not cleaned_name:
+        raise HTTPException(status_code=400, detail="Location name is required")
+    if _get_user_location_for_user(str(user["id"]), location_id) is None:
+        raise HTTPException(status_code=404, detail="User location not found")
+
+    with get_connection() as connection:
+        try:
+            connection.execute(
+                "UPDATE user_locations SET name = ? WHERE id = ? AND user_id = ?",
+                (cleaned_name, location_id, str(user["id"])),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as exc:
+            connection.rollback()
+            _raise_write_error(exc, "User location already exists or is invalid")
+
+    updated = _get_user_location_for_user(str(user["id"]), location_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="User location not found")
+    return updated
+
+
+def delete_personal_location(auth_user: dict[str, Any], location_id: int) -> dict[str, Any]:
+    """Delete a location owned by the authenticated user."""
+    user = _get_or_create_authenticated_user(auth_user)
+    location = _get_user_location_for_user(str(user["id"]), location_id)
+    if location is None:
+        raise HTTPException(status_code=404, detail="User location not found")
+
+    deleted = delete_user_location(location_id)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="User location not found")
+    return deleted
+
+
 def move_personal_collection_game(
     auth_user: dict[str, Any],
     collection_game_id: int,
@@ -998,6 +1079,23 @@ def move_personal_collection_game(
     if updated is None:
         raise HTTPException(status_code=404, detail="Collection game not found")
     return updated
+
+
+def remove_game_from_personal_collection(
+    auth_user: dict[str, Any],
+    collection_game_id: int,
+) -> dict[str, Any]:
+    """Remove an existing game row from the authenticated user's collection."""
+    collection = _get_or_create_personal_collection(auth_user)
+    collection_game = get_collection_game(collection_game_id)
+
+    if collection_game is None or collection_game["collection_id"] != collection["id"]:
+        raise HTTPException(status_code=404, detail="Collection game not found")
+
+    deleted = delete_collection_game(collection_game_id)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Collection game not found")
+    return deleted
 
 
 def create_collection_game(collection_game: schemas.CollectionGameCreate):

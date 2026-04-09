@@ -1,3 +1,11 @@
+### 1.4.1 (2026-04-09)
+
+* Separation de `Ma collection` et `Catalogue`, avec compteur du catalogue dans le titre et tri par defaut sur les annees decroissantes.
+* Reorganisation de `Ma collection` en zones simples `Mes lieux`, `Mes jeux` et `Rangement par lieu`, avec cartes de rangement allegees et survol complet sur l'image.
+* Ajout d'une recherche rapide dans la barre superieure pour trouver un jeu du catalogue et l'ajouter directement a la collection.
+* Ajout du renommage et de la suppression des lieux personnels, avec suppression qui conserve les jeux dans la collection en `Sans lieu`.
+* Simplification de l'accueil avec trois compteurs collection, derniers ajouts avec nom du lieu, et retrait des actions rapides redondantes.
+
 ### 1.4.0 (2026-04-09)
 
 * Ajout d'un parcours catalogue -> collection avec action `Ajouter`, badge `Dans ma collection` et rafraichissement du board personnel.

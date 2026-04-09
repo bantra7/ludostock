@@ -1,4 +1,4 @@
-import { FormEvent, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getErrorMessage, joinNames, request } from "./api";
 import { authClient } from "./auth-client";
@@ -22,26 +22,24 @@ const REFERENCE_PAGE_SIZE = 25;
 const GAME_PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
 const FRONTEND_VERSION = __APP_VERSION__;
 const AUTH_SESSION_TIMEOUT_MS = 8000;
+const TOAST_DURATION_MS = 5000;
+const TOAST_MAX_VISIBLE = 4;
+const NOTIFICATION_LOG_LIMIT = 12;
 const ADMIN_EMAIL = "renault.jbapt@gmail.com";
 const GAME_SORT_OPTIONS = [
   { value: "name:asc", label: "Nom (A-Z)", sortBy: "name", sortDir: "asc" },
   { value: "name:desc", label: "Nom (Z-A)", sortBy: "name", sortDir: "desc" },
-  { value: "type:asc", label: "Type (A-Z)", sortBy: "type", sortDir: "asc" },
-  { value: "type:desc", label: "Type (Z-A)", sortBy: "type", sortDir: "desc" },
   { value: "creation_year:asc", label: "Annee (croissante)", sortBy: "creation_year", sortDir: "asc" },
   { value: "creation_year:desc", label: "Annee (decroissante)", sortBy: "creation_year", sortDir: "desc" },
   { value: "players:asc", label: "Joueurs (croissant)", sortBy: "players", sortDir: "asc" },
   { value: "players:desc", label: "Joueurs (decroissant)", sortBy: "players", sortDir: "desc" },
   { value: "duration_minutes:asc", label: "Duree (croissante)", sortBy: "duration_minutes", sortDir: "asc" },
   { value: "duration_minutes:desc", label: "Duree (decroissante)", sortBy: "duration_minutes", sortDir: "desc" },
-  { value: "authors:asc", label: "Auteurs (A-Z)", sortBy: "authors", sortDir: "asc" },
-  { value: "authors:desc", label: "Auteurs (Z-A)", sortBy: "authors", sortDir: "desc" },
-  { value: "editors:asc", label: "Editeurs (A-Z)", sortBy: "editors", sortDir: "asc" },
-  { value: "editors:desc", label: "Editeurs (Z-A)", sortBy: "editors", sortDir: "desc" },
 ] as const;
 
 type GameSortValue = (typeof GAME_SORT_OPTIONS)[number]["value"];
 type FlashMessage = { tone: "success" | "error"; text: string };
+type ToastNotification = FlashMessage & { id: number };
 type ConfirmDialog = {
   body: string;
   confirmLabel?: string;
@@ -54,6 +52,7 @@ type AuthenticatedUser = {
   image?: string | null;
   name?: string | null;
 };
+type NavigationItem = (typeof navItems)[number];
 
 function buildGamePagePath(
   basePath: string,
@@ -93,6 +92,74 @@ function createReferenceBooleanMap(initialValue: boolean) {
     editors: initialValue,
     distributors: initialValue,
   };
+}
+
+function useToastNotifications() {
+  const [toasts, setToasts] = useState<ToastNotification[]>([]);
+  const [notificationLog, setNotificationLog] = useState<ToastNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const nextToastId = useRef(1);
+  const toastTimeouts = useRef(new Map<number, number>());
+
+  const dismissToast = useCallback((id: number) => {
+    const timeoutId = toastTimeouts.current.get(id);
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+      toastTimeouts.current.delete(id);
+    }
+
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
+
+  const showToast = useCallback(
+    (message: FlashMessage) => {
+      const id = nextToastId.current;
+      nextToastId.current += 1;
+
+      const timeoutId = window.setTimeout(() => {
+        dismissToast(id);
+      }, TOAST_DURATION_MS);
+
+      toastTimeouts.current.set(id, timeoutId);
+      const notification = { ...message, id };
+
+      setNotificationLog((current) => [notification, ...current].slice(0, NOTIFICATION_LOG_LIMIT));
+      setUnreadCount((current) => Math.min(current + 1, NOTIFICATION_LOG_LIMIT));
+
+      setToasts((current) => {
+        const next = [...current, notification];
+        const dropped = next.slice(0, Math.max(0, next.length - TOAST_MAX_VISIBLE));
+
+        dropped.forEach((toast) => {
+          const droppedTimeoutId = toastTimeouts.current.get(toast.id);
+          if (droppedTimeoutId) {
+            window.clearTimeout(droppedTimeoutId);
+          }
+          toastTimeouts.current.delete(toast.id);
+        });
+
+        return next.slice(-TOAST_MAX_VISIBLE);
+      });
+    },
+    [dismissToast],
+  );
+
+  const markNotificationsAsRead = useCallback(() => {
+    setUnreadCount(0);
+  }, []);
+
+  useEffect(() => {
+    const activeTimeouts = toastTimeouts.current;
+
+    return () => {
+      activeTimeouts.forEach((timeoutId) => {
+        window.clearTimeout(timeoutId);
+      });
+      activeTimeouts.clear();
+    };
+  }, []);
+
+  return { dismissToast, markNotificationsAsRead, notificationLog, showToast, toasts, unreadCount };
 }
 
 function App() {
@@ -196,8 +263,15 @@ function App() {
 
 function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: () => void; user: AuthenticatedUser }) {
   const { authMessage, onSignOut, user } = props;
-  const [activeNav, setActiveNav] = useState<NavKey>("games");
-  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const {
+    dismissToast,
+    markNotificationsAsRead,
+    notificationLog,
+    showToast,
+    toasts,
+    unreadCount,
+  } = useToastNotifications();
+  const [activeNav, setActiveNav] = useState<NavKey>("home");
   const [activeReference, setActiveReference] = useState<ReferenceKey | null>(null);
   const [games, setGames] = useState<Game[]>([]);
   const [totalGames, setTotalGames] = useState(0);
@@ -222,26 +296,37 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   const [search, setSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [gamePageSize, setGamePageSize] = useState<number>(DEFAULT_GAME_PAGE_SIZE);
-  const [gameSort, setGameSort] = useState<GameSortValue>("name:asc");
+  const [gameSort, setGameSort] = useState<GameSortValue>("creation_year:desc");
   const [gamesRefreshToken, setGamesRefreshToken] = useState(0);
-  const [message, setMessage] = useState<FlashMessage | null>(null);
   const deferredSearch = useDeferredValue(search);
   const [collectionBoard, setCollectionBoard] = useState<CollectionBoard | null>(null);
   const [isCollectionLoading, setIsCollectionLoading] = useState(false);
   const [hasLoadedCollectionOnce, setHasLoadedCollectionOnce] = useState(false);
   const [collectionSearch, setCollectionSearch] = useState("");
+  const [quickCatalogSearch, setQuickCatalogSearch] = useState("");
+  const [quickCatalogResults, setQuickCatalogResults] = useState<Game[]>([]);
+  const [isQuickCatalogLoading, setIsQuickCatalogLoading] = useState(false);
+  const [isQuickCatalogSearchOpen, setIsQuickCatalogSearchOpen] = useState(false);
+  const deferredQuickCatalogSearch = useDeferredValue(quickCatalogSearch);
   const [locationDraft, setLocationDraft] = useState("");
   const [isCreatingLocation, setIsCreatingLocation] = useState(false);
   const [pendingCollectionGameIds, setPendingCollectionGameIds] = useState<number[]>([]);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialog | null>(null);
-  const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const gamesCatalogRef = useRef<HTMLElement | null>(null);
   const isReferenceAdmin = user.email?.toLowerCase() === ADMIN_EMAIL;
-  const visibleNavItems = navItems.filter((item) => isReferenceAdmin || item.key !== "references");
+  const visibleNavItems: NavigationItem[] = [
+    { key: "home", label: "Accueil" },
+    { key: "games", label: "Ma collection" },
+    { key: "catalog", label: "Catalogue" },
+    { key: "settings", label: "Parametres" },
+  ];
   const activeNavItem = visibleNavItems.find((item) => item.key === activeNav) ?? visibleNavItems[0];
   const sectionDescriptions: Record<NavKey, string> = {
-    games: "Parcourez et filtrez le catalogue Ludostock.",
-    collection: "Consultez et enrichissez votre collection personnelle.",
-    references: "Administrez les auteurs, artistes, editeurs et distributeurs.",
+    home: "Votre ludotheque en un coup d'oeil.",
+    catalog: "Parcourez les references et ajoutez des jeux.",
+    games: "Consultez les jeux que vous possedez.",
+    locations: "",
+    settings: "Profil et referentiels.",
   };
 
   useEffect(() => {
@@ -257,7 +342,48 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   }, []);
 
   useEffect(() => {
-    if (activeNav !== "collection") {
+    const query = deferredQuickCatalogSearch.trim();
+    if (query.length < 2) {
+      setQuickCatalogResults([]);
+      setIsQuickCatalogLoading(false);
+      return;
+    }
+
+    let ignoreResult = false;
+
+    async function loadQuickCatalogResults() {
+      setIsQuickCatalogLoading(true);
+      try {
+        const page = await request<GamePage>(buildGamePagePath("/games/", 1, 8, "name:asc", query));
+        if (!ignoreResult) {
+          setQuickCatalogResults(page.items);
+        }
+      } catch (error) {
+        if (!ignoreResult) {
+          showToast({ tone: "error", text: getErrorMessage(error) });
+        }
+      } finally {
+        if (!ignoreResult) {
+          setIsQuickCatalogLoading(false);
+        }
+      }
+    }
+
+    void loadQuickCatalogResults();
+
+    return () => {
+      ignoreResult = true;
+    };
+  }, [deferredQuickCatalogSearch, showToast]);
+
+  useEffect(() => {
+    if (authMessage) {
+      showToast(authMessage);
+    }
+  }, [authMessage, showToast]);
+
+  useEffect(() => {
+    if (activeNav !== "games" && activeNav !== "locations") {
       return;
     }
     void loadCollectionBoard();
@@ -270,36 +396,10 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   }, [hasLoadedOnce, isGamesLoading]);
 
   useEffect(() => {
-    function handlePointerDown(event: PointerEvent) {
-      if (!profileMenuRef.current?.contains(event.target as Node)) {
-        setIsProfileMenuOpen(false);
-      }
+    if (!isReferenceAdmin && activeReference !== null) {
+      setActiveReference(null);
     }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setIsProfileMenuOpen(false);
-      }
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, []);
-
-  useEffect(() => {
-    setIsProfileMenuOpen(false);
-  }, [activeNav]);
-
-  useEffect(() => {
-    if (!isReferenceAdmin && activeNav === "references") {
-      setActiveNav("collection");
-    }
-  }, [activeNav, isReferenceAdmin]);
+  }, [activeReference, isReferenceAdmin]);
 
   async function loadGamesPage(pageNumber: number) {
     setIsGamesLoading(true);
@@ -313,7 +413,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       setGames(page.items);
       setTotalGames(page.total);
     } catch (error) {
-      setMessage({ tone: "error", text: getErrorMessage(error) });
+      showToast({ tone: "error", text: getErrorMessage(error) });
     } finally {
       setIsGamesLoading(false);
     }
@@ -325,7 +425,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       const board = await request<CollectionBoard>("/me/collection/board/");
       setCollectionBoard(board);
     } catch (error) {
-      setMessage({ tone: "error", text: getErrorMessage(error) });
+      showToast({ tone: "error", text: getErrorMessage(error) });
     } finally {
       setIsCollectionLoading(false);
       setHasLoadedCollectionOnce(true);
@@ -335,13 +435,13 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   async function createReference(kind: ReferenceKey, event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!isReferenceAdmin) {
-      setMessage({ tone: "error", text: "Seul l'administrateur peut modifier les referentiels." });
+      showToast({ tone: "error", text: "Seul l'administrateur peut modifier les referentiels." });
       return;
     }
 
     const name = referenceDrafts[kind].trim();
     if (!name) {
-      setMessage({ tone: "error", text: `Le nom pour ${referenceTitles[kind].toLowerCase()} est requis.` });
+      showToast({ tone: "error", text: `Le nom pour ${referenceTitles[kind].toLowerCase()} est requis.` });
       return;
     }
 
@@ -354,15 +454,15 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       if (referenceLoaded[kind]) {
         await loadReferencePage(kind, referencePages[kind]);
       }
-      setMessage({ tone: "success", text: `${referenceTitles[kind].slice(0, -1)} cree avec succes.` });
+      showToast({ tone: "success", text: `${referenceTitles[kind].slice(0, -1)} cree avec succes.` });
     } catch (error) {
-      setMessage({ tone: "error", text: getErrorMessage(error) });
+      showToast({ tone: "error", text: getErrorMessage(error) });
     }
   }
 
   async function deleteReference(kind: ReferenceKey, id: number) {
     if (!isReferenceAdmin) {
-      setMessage({ tone: "error", text: "Seul l'administrateur peut modifier les referentiels." });
+      showToast({ tone: "error", text: "Seul l'administrateur peut modifier les referentiels." });
       return;
     }
 
@@ -380,9 +480,36 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
     });
   }
 
+  async function renameReference(kind: ReferenceKey, id: number, name: string) {
+    if (!isReferenceAdmin) {
+      showToast({ tone: "error", text: "Seul l'administrateur peut modifier les referentiels." });
+      return;
+    }
+
+    try {
+      const renamed = await request<NamedEntity>(`/${referenceEndpoints[kind]}/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      });
+      setReferences((current) => ({
+        ...current,
+        [kind]: current[kind].map((entry) => (entry.id === id ? renamed : entry)),
+      }));
+      setGames((current) =>
+        current.map((game) => ({
+          ...game,
+          [kind]: game[kind].map((entry) => (entry.id === id ? renamed : entry)),
+        })),
+      );
+      showToast({ tone: "success", text: `${renamed.name} a ete enregistre.` });
+    } catch (error) {
+      showToast({ tone: "error", text: getErrorMessage(error) });
+    }
+  }
+
   async function deleteGame(gameId: number) {
     if (!isReferenceAdmin) {
-      setMessage({ tone: "error", text: "Seul l'administrateur peut supprimer un jeu du catalogue." });
+      showToast({ tone: "error", text: "Seul l'administrateur peut supprimer un jeu du catalogue." });
       return;
     }
 
@@ -412,9 +539,9 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       const nextPage =
         references[kind].length === 1 && referencePages[kind] > 1 ? referencePages[kind] - 1 : referencePages[kind];
       await loadReferencePage(kind, nextPage);
-      setMessage({ tone: "success", text: `${name} a ete supprime.` });
+      showToast({ tone: "success", text: `${name} a ete supprime.` });
     } catch (error) {
-      setMessage({ tone: "error", text: getErrorMessage(error) });
+      showToast({ tone: "error", text: getErrorMessage(error) });
     }
   }
 
@@ -425,9 +552,9 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       if (hasLoadedCollectionOnce) {
         await loadCollectionBoard();
       }
-      setMessage({ tone: "success", text: `${name} a ete supprime.` });
+      showToast({ tone: "success", text: `${name} a ete supprime.` });
     } catch (error) {
-      setMessage({ tone: "error", text: getErrorMessage(error) });
+      showToast({ tone: "error", text: getErrorMessage(error) });
     }
   }
 
@@ -448,14 +575,15 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
             }
           : current,
       );
-      setMessage({ tone: "success", text: `Jeu deplace vers ${targetLocation?.name ?? "Sans lieu"}.` });
+      showToast({ tone: "success", text: `Jeu deplace vers ${targetLocation?.name ?? "Sans lieu"}.` });
     } catch (error) {
-      setMessage({ tone: "error", text: getErrorMessage(error) });
+      showToast({ tone: "error", text: getErrorMessage(error) });
     }
   }
 
-  async function addGameToCollection(gameId: number) {
+  async function addGameToCollection(gameId: number, gameName?: string) {
     const game = games.find((entry) => entry.id === gameId);
+    const toastGameName = gameName ?? game?.name ?? "Ce jeu";
     setPendingCollectionGameIds((current) => (current.includes(gameId) ? current : [...current, gameId]));
 
     try {
@@ -463,14 +591,48 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
         method: "POST",
         body: JSON.stringify({ game_id: gameId }),
       });
-      if (activeNav === "collection" || hasLoadedCollectionOnce) {
+      if (activeNav === "games" || activeNav === "locations" || hasLoadedCollectionOnce) {
         await loadCollectionBoard();
       }
-      setMessage({ tone: "success", text: `${game?.name ?? "Ce jeu"} a ete ajoute a votre collection.` });
+      showToast({ tone: "success", text: `${toastGameName} a ete ajoute a votre collection.` });
     } catch (error) {
-      setMessage({ tone: "error", text: getErrorMessage(error) });
+      showToast({ tone: "error", text: getErrorMessage(error) });
     } finally {
       setPendingCollectionGameIds((current) => current.filter((id) => id !== gameId));
+    }
+  }
+
+  async function addQuickCatalogGameToCollection(game: Game) {
+    await addGameToCollection(game.id, game.name);
+    setQuickCatalogSearch("");
+    setQuickCatalogResults([]);
+    setIsQuickCatalogSearchOpen(false);
+  }
+
+  function removeGameFromCollection(collectionItem: CollectionItem) {
+    setConfirmDialog({
+      title: `Retirer ${collectionItem.game.name} ?`,
+      body: "Le jeu sera retire de votre collection personnelle. Il restera disponible dans le Catalogue.",
+      confirmLabel: "Retirer",
+      isDanger: true,
+      onConfirm: () => void confirmRemoveGameFromCollection(collectionItem),
+    });
+  }
+
+  async function confirmRemoveGameFromCollection(collectionItem: CollectionItem) {
+    try {
+      await request(`/me/collection/games/${collectionItem.id}`, { method: "DELETE" });
+      setCollectionBoard((current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.filter((item) => item.id !== collectionItem.id),
+            }
+          : current,
+      );
+      showToast({ tone: "success", text: `${collectionItem.game.name} a ete retire de votre collection.` });
+    } catch (error) {
+      showToast({ tone: "error", text: getErrorMessage(error) });
     }
   }
 
@@ -478,7 +640,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
     event.preventDefault();
     const name = locationDraft.trim();
     if (!name) {
-      setMessage({ tone: "error", text: "Le nom du lieu est requis." });
+      showToast({ tone: "error", text: "Le nom du lieu est requis." });
       return;
     }
 
@@ -490,11 +652,72 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       });
       setLocationDraft("");
       await loadCollectionBoard();
-      setMessage({ tone: "success", text: `Le lieu ${name} a ete cree.` });
+      showToast({ tone: "success", text: `Le lieu ${name} a ete cree.` });
     } catch (error) {
-      setMessage({ tone: "error", text: getErrorMessage(error) });
+      showToast({ tone: "error", text: getErrorMessage(error) });
     } finally {
       setIsCreatingLocation(false);
+    }
+  }
+
+  function renameCollectionLocation(location: UserLocation) {
+    const nextName = window.prompt("Nouveau nom du lieu", location.name);
+    const name = nextName?.trim();
+
+    if (!name || name === location.name) {
+      return;
+    }
+
+    void confirmRenameCollectionLocation(location, name);
+  }
+
+  async function confirmRenameCollectionLocation(location: UserLocation, name: string) {
+    try {
+      const renamed = await request<UserLocation>(`/me/collection/locations/${location.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      });
+      setCollectionBoard((current) =>
+        current
+          ? {
+              ...current,
+              locations: current.locations.map((entry) => (entry.id === renamed.id ? renamed : entry)),
+            }
+          : current,
+      );
+      showToast({ tone: "success", text: `Le lieu ${renamed.name} a ete enregistre.` });
+    } catch (error) {
+      showToast({ tone: "error", text: getErrorMessage(error) });
+    }
+  }
+
+  function deleteCollectionLocation(location: UserLocation) {
+    setConfirmDialog({
+      title: `Supprimer ${location.name} ?`,
+      body: "Le lieu sera supprime. Les jeux ranges dedans resteront dans votre collection et passeront dans Sans lieu.",
+      confirmLabel: "Supprimer le lieu",
+      isDanger: true,
+      onConfirm: () => void confirmDeleteCollectionLocation(location),
+    });
+  }
+
+  async function confirmDeleteCollectionLocation(location: UserLocation) {
+    try {
+      await request<UserLocation>(`/me/collection/locations/${location.id}`, { method: "DELETE" });
+      setCollectionBoard((current) =>
+        current
+          ? {
+              ...current,
+              locations: current.locations.filter((entry) => entry.id !== location.id),
+              items: current.items.map((item) =>
+                item.location_id === location.id ? { ...item, location_id: null } : item,
+              ),
+            }
+          : current,
+      );
+      showToast({ tone: "success", text: `Le lieu ${location.name} a ete supprime.` });
+    } catch (error) {
+      showToast({ tone: "error", text: getErrorMessage(error) });
     }
   }
 
@@ -516,7 +739,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       setReferenceHasNext((current) => ({ ...current, [kind]: hasNextPage }));
       setReferenceLoaded((current) => ({ ...current, [kind]: true }));
     } catch (error) {
-      setMessage({ tone: "error", text: getErrorMessage(error) });
+      showToast({ tone: "error", text: getErrorMessage(error) });
     } finally {
       setReferenceLoading((current) => ({ ...current, [kind]: false }));
     }
@@ -534,87 +757,133 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
     }
   }
 
+  function openGamesCatalog() {
+    setActiveNav("catalog");
+  }
+
   const totalPages = Math.max(1, Math.ceil(totalGames / gamePageSize));
   const pageStart = totalGames === 0 ? 0 : (currentPage - 1) * gamePageSize + 1;
   const pageEnd = totalGames === 0 ? 0 : Math.min(currentPage * gamePageSize, totalGames);
   const collectionGameIds = new Set(collectionBoard?.items.map((item) => item.game_id) ?? []);
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      <aside className="sidebar app-nav-shell">
         <div className="brand">
-          <img className="brand-mark" src="/ludostock-logo.svg" alt="" aria-hidden="true" />
-          <div>
-            <p className="brand-title">Ludostock</p>
-            <p className="brand-subtitle">Catalogue prive</p>
+          <div className="brand-copy">
+            <div className="brand-title-row">
+              <p className="brand-title">Ludostock</p>
+            </div>
           </div>
         </div>
 
-        <nav className="nav-list" aria-label="Navigation principale">
+        <nav className="nav-list mobile-tab-list flex overflow-x-auto" aria-label="Navigation principale">
           {visibleNavItems.map((item) => (
             <button
               key={item.key}
               type="button"
-              className={`nav-item ${activeNav === item.key ? "active" : ""}`}
-              onClick={() => setActiveNav(item.key)}
+              className={`nav-item mobile-tab-item shrink-0 ${activeNav === item.key ? "active" : ""}`}
+              onClick={() => {
+                setActiveNav(item.key);
+                if (item.key === "games") {
+                  setCollectionSearch("");
+                }
+              }}
             >
-              {item.label}
+              <span>{item.label}</span>
             </button>
           ))}
         </nav>
+
+        <div className="top-nav-actions" aria-label="Actions rapides">
+          <div
+            className="top-search-menu"
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) {
+                setIsQuickCatalogSearchOpen(false);
+              }
+            }}
+          >
+            <label className="top-search">
+              <SearchIcon />
+              <input
+                aria-label="Rechercher un jeu a ajouter"
+                value={quickCatalogSearch}
+                onChange={(event) => {
+                  setQuickCatalogSearch(event.target.value);
+                  setIsQuickCatalogSearchOpen(true);
+                }}
+                onFocus={() => setIsQuickCatalogSearchOpen(true)}
+                placeholder="Ajouter un jeu..."
+              />
+            </label>
+
+            {isQuickCatalogSearchOpen && quickCatalogSearch.trim().length >= 2 ? (
+              <section className="quick-catalog-panel" aria-label="Resultats du catalogue">
+                {isQuickCatalogLoading ? (
+                  <p className="quick-catalog-message">Recherche...</p>
+                ) : quickCatalogResults.length === 0 ? (
+                  <p className="quick-catalog-message">Aucun jeu trouve.</p>
+                ) : (
+                  <div className="quick-catalog-list">
+                    {quickCatalogResults.map((game) => {
+                      const isInCollection = collectionGameIds.has(game.id);
+                      const isPending = pendingCollectionGameIds.includes(game.id);
+
+                      return (
+                        <article key={game.id} className="quick-catalog-result">
+                          <div className="quick-catalog-media">
+                            {game.image_url ? (
+                              <img src={game.image_url} alt="" loading="lazy" />
+                            ) : (
+                              <span aria-hidden="true">{game.name.slice(0, 1).toUpperCase()}</span>
+                            )}
+                          </div>
+                          <div className="quick-catalog-copy">
+                            <strong>{game.name}</strong>
+                            <small>{game.creation_year ?? "Annee inconnue"}</small>
+                          </div>
+                          {isInCollection ? (
+                            <span className="status-pill compact-status-pill">Ajoute</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="primary-button icon-button"
+                              disabled={isPending}
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => void addQuickCatalogGameToCollection(game)}
+                              aria-label={`Ajouter ${game.name} a ma collection`}
+                              title="Ajouter a ma collection"
+                            >
+                              <PlusIcon />
+                            </button>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            ) : null}
+          </div>
+          <NotificationBell
+            notifications={notificationLog}
+            unreadCount={unreadCount}
+            onMarkRead={markNotificationsAsRead}
+          />
+          <button type="button" className="top-avatar-button" onClick={() => setActiveNav("settings")} aria-label="Profil">
+            {user.image ? <img src={user.image} alt="" /> : <span>{getUserInitial(user)}</span>}
+          </button>
+        </div>
       </aside>
 
       <main className="main-panel">
-        <header className="topbar">
-          <div className="section-intro">
-            <h1>{activeNavItem.label}</h1>
-            <p>{sectionDescriptions[activeNavItem.key]}</p>
-          </div>
-
-          <div className={`profile-menu ${isProfileMenuOpen ? "open" : ""}`} ref={profileMenuRef}>
-            <button
-              type="button"
-              className="profile-trigger"
-              aria-expanded={isProfileMenuOpen}
-              aria-haspopup="menu"
-              aria-label="Ouvrir le menu profil"
-              onClick={() => setIsProfileMenuOpen((current) => !current)}
-            >
-              <ProfileIcon />
-              <div className="profile-trigger-avatar" aria-hidden="true">
-                {user.image ? <img src={user.image} alt="" /> : <span>{getUserInitial(user)}</span>}
-              </div>
-            </button>
-
-            {isProfileMenuOpen ? (
-              <div className="profile-dropdown" role="menu" aria-label="Menu profil">
-                <div className="profile-dropdown-header">
-                  <div className="profile-dropdown-avatar" aria-hidden="true">
-                    {user.image ? <img src={user.image} alt="" /> : <span>{getUserInitial(user)}</span>}
-                  </div>
-                  <div className="profile-dropdown-copy">
-                    <strong>{user.name || "Utilisateur Google"}</strong>
-                    <span>{user.email || "Adresse e-mail indisponible"}</span>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  className="secondary-button profile-signout"
-                  role="menuitem"
-                  onClick={() => {
-                    setIsProfileMenuOpen(false);
-                    onSignOut();
-                  }}
-                >
-                  Se deconnecter
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </header>
-
-        {authMessage ? <section className={`flash flash-${authMessage.tone}`}>{authMessage.text}</section> : null}
-        {message ? <section className={`flash flash-${message.tone}`}>{message.text}</section> : null}
+        {activeNav === "catalog" ? null : (
+          <header className="topbar">
+            <div className="section-intro">
+              <h1>{activeNav === "home" ? `Bonjour ${getUserFirstName(user)}` : activeNavItem.label}</h1>
+            </div>
+          </header>
+        )}
 
         {!hasLoadedOnce ? (
           <section className="loading-card">
@@ -623,69 +892,117 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
           </section>
         ) : null}
 
-        {hasLoadedOnce && activeNav === "games" ? (
-          <GamesSection
-            currentPage={currentPage}
-            games={games}
-            isGamesLoading={isGamesLoading}
-            pageEnd={pageEnd}
-            pageSize={gamePageSize}
-            pageStart={pageStart}
-            search={search}
-            sortValue={gameSort}
-            totalGames={totalGames}
-            totalPages={totalPages}
-            collectionGameIds={collectionGameIds}
-            pendingCollectionGameIds={pendingCollectionGameIds}
-            canAdministerCatalog={isReferenceAdmin}
-            onAddGameToCollection={addGameToCollection}
-            onDeleteGame={deleteGame}
-            onPageChange={setCurrentPage}
-            onPageSizeChange={setGamePageSize}
-            onSearchClear={() => setSearch("")}
-            onSearchChange={setSearch}
-            onSortChange={setGameSort}
-          />
-        ) : null}
-
-        {activeNav === "collection" ? (
-          <CollectionSection
+        {activeNav === "home" ? (
+          <HomeSection
             board={collectionBoard}
-            hasLoadedOnce={hasLoadedCollectionOnce}
-            isCollectionLoading={isCollectionLoading}
-            isCreatingLocation={isCreatingLocation}
-            locationDraft={locationDraft}
-            search={collectionSearch}
-            onCreateLocation={createCollectionLocation}
-            onLocationDraftChange={setLocationDraft}
-            onMoveGame={moveCollectionGame}
-            onNavigateToCatalog={() => setActiveNav("games")}
-            onSearchClear={() => setCollectionSearch("")}
-            onSearchChange={setCollectionSearch}
+            catalogTotal={totalGames}
+            hasLoadedCollectionOnce={hasLoadedCollectionOnce}
+            onCatalogOpen={openGamesCatalog}
+            onNavigate={setActiveNav}
           />
         ) : null}
 
-        {isReferenceAdmin && hasLoadedOnce && activeNav === "references" ? (
-          <EntitiesSection
-            activeReference={activeReference}
-            drafts={referenceDrafts}
-            isReferenceLoaded={referenceLoaded}
-            isReferenceLoading={referenceLoading}
-            referenceHasNext={referenceHasNext}
-            referencePages={referencePages}
-            references={references}
-            onCreateReference={createReference}
-            onDeleteReference={deleteReference}
-            onDraftChange={setReferenceDrafts}
-            onReferencePageChange={(kind, pageNumber) => void loadReferencePage(kind, pageNumber)}
-            onSelectReference={(kind) => void toggleReference(kind)}
-          />
+        {activeNav === "games" ? (
+          <div className="games-main">
+            <LocationsManagerSection
+              board={collectionBoard}
+              hasLoadedOnce={hasLoadedCollectionOnce}
+              isCreatingLocation={isCreatingLocation}
+              isCollectionLoading={isCollectionLoading}
+              locationDraft={locationDraft}
+              onCreateLocation={createCollectionLocation}
+              onDeleteLocation={deleteCollectionLocation}
+              onLocationDraftChange={setLocationDraft}
+              onRenameLocation={renameCollectionLocation}
+            />
+
+            <CollectionGamesSection
+              board={collectionBoard}
+              hasLoadedOnce={hasLoadedCollectionOnce}
+              isCollectionLoading={isCollectionLoading}
+              search={collectionSearch}
+              onRemoveGame={removeGameFromCollection}
+              onSearchClear={() => setCollectionSearch("")}
+              onSearchChange={setCollectionSearch}
+            />
+
+            <LocationsSection
+              board={collectionBoard}
+              hasLoadedOnce={hasLoadedCollectionOnce}
+              isCollectionLoading={isCollectionLoading}
+              search={collectionSearch}
+              onMoveGame={moveCollectionGame}
+              onNavigateToCatalog={openGamesCatalog}
+              onRemoveGame={removeGameFromCollection}
+              onSearchClear={() => setCollectionSearch("")}
+            />
+          </div>
+        ) : null}
+
+        {activeNav === "catalog" ? (
+          <section className="games-catalog-reference" ref={gamesCatalogRef}>
+            <section className="section-intro panel">
+              <div className="catalog-title-row">
+                <h2>Catalogue des jeux</h2>
+                <span className="status-pill">{totalGames > 1 ? `${totalGames} jeux` : `${totalGames} jeu`}</span>
+              </div>
+            </section>
+
+            <GamesSection
+              currentPage={currentPage}
+              games={games}
+              isGamesLoading={isGamesLoading}
+              pageEnd={pageEnd}
+              pageSize={gamePageSize}
+              pageStart={pageStart}
+              search={search}
+              sortValue={gameSort}
+              totalGames={totalGames}
+              totalPages={totalPages}
+              collectionGameIds={collectionGameIds}
+              pendingCollectionGameIds={pendingCollectionGameIds}
+              canAdministerCatalog={isReferenceAdmin}
+              onAddGameToCollection={addGameToCollection}
+              onDeleteGame={deleteGame}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={setGamePageSize}
+              onSearchClear={() => setSearch("")}
+              onSearchChange={setSearch}
+              onSortChange={setGameSort}
+            />
+          </section>
+        ) : null}
+
+        {activeNav === "settings" ? (
+          <section className="settings-layout">
+            <ProfileSettingsPanel onSignOut={onSignOut} user={user} />
+
+            {isReferenceAdmin && hasLoadedOnce ? (
+              <EntitiesSection
+                activeReference={activeReference}
+                drafts={referenceDrafts}
+                isReferenceLoaded={referenceLoaded}
+                isReferenceLoading={referenceLoading}
+                referenceHasNext={referenceHasNext}
+                referencePages={referencePages}
+                references={references}
+                onCreateReference={createReference}
+                onDeleteReference={deleteReference}
+                onDraftChange={setReferenceDrafts}
+                onReferencePageChange={(kind, pageNumber) => void loadReferencePage(kind, pageNumber)}
+                onRenameReference={renameReference}
+                onSelectReference={(kind) => void toggleReference(kind)}
+              />
+            ) : null}
+          </section>
         ) : null}
 
         <footer className="app-footer panel" aria-label="Version de l'application">
           <span>Version {FRONTEND_VERSION}</span>
         </footer>
       </main>
+
+      <ToastViewport notifications={toasts} onDismiss={dismissToast} />
 
       {confirmDialog ? (
         <ConfirmModal
@@ -699,6 +1016,339 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
         />
       ) : null}
     </div>
+  );
+}
+
+function HomeSection({
+  board,
+  catalogTotal,
+  hasLoadedCollectionOnce,
+  onCatalogOpen,
+  onNavigate,
+}: {
+  board: CollectionBoard | null;
+  catalogTotal: number;
+  hasLoadedCollectionOnce: boolean;
+  onCatalogOpen: () => void;
+  onNavigate: (navKey: NavKey) => void;
+}) {
+  const collectionTotal = board?.items.length ?? 0;
+  const locationTotal = board?.locations.length ?? 0;
+  const visibleLocations = board?.locations.slice(0, 3) ?? [];
+  const unassignedTotal = board?.items.filter((item) => item.location_id === null).length ?? 0;
+  const latestItems = board?.items.slice(-4).reverse() ?? [];
+  const locationNames = new Map((board?.locations ?? []).map((location) => [location.id, location.name]));
+  const locationSummaries = visibleLocations.map((location) => ({
+    ...location,
+    count: board?.items.filter((item) => item.location_id === location.id).length ?? 0,
+  }));
+
+  return (
+    <section className="home-layout home-dashboard">
+      <section className="home-command-center">
+        <div className="home-stat-stack home-stat-stack-simple" aria-label="Synthese de ma collection">
+          <article className="home-stat-card">
+            <span className="stat-icon-box">
+              <GamesIcon />
+            </span>
+            <strong>{hasLoadedCollectionOnce ? collectionTotal : "..."}</strong>
+            <span>Jeux de societe</span>
+          </article>
+
+          <article className="home-stat-card">
+            <span className="stat-icon-box">
+              <LocationIcon />
+            </span>
+            <strong>{hasLoadedCollectionOnce ? locationTotal : "..."}</strong>
+            <span>Lieux de stockage</span>
+          </article>
+
+          <article className="home-stat-card">
+            <span className="stat-icon-box">
+              <LocationIcon />
+            </span>
+            <strong>{hasLoadedCollectionOnce ? unassignedTotal : "..."}</strong>
+            <span>{unassignedTotal > 1 ? "Jeux a ranger" : "Jeu a ranger"}</span>
+          </article>
+        </div>
+      </section>
+
+      <section className="dashboard-section">
+        <div className="section-heading-row">
+          <div>
+            <h2>Derniers ajouts</h2>
+          </div>
+          <button type="button" className="link-button" onClick={() => onNavigate("games")}>
+            Tout voir +
+          </button>
+        </div>
+
+        <div className="recent-game-strip">
+          {latestItems.length > 0 ? (
+            latestItems.map((item) => (
+              <article key={item.id} className="recent-game-card">
+                <div className="recent-game-media">
+                  {item.game.image_url ? (
+                    <img src={item.game.image_url} alt={item.game.name} loading="lazy" />
+                  ) : (
+                    <div className="collection-card-fallback" aria-hidden="true">
+                      {item.game.name.slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                </div>
+                <p>{item.game.type || "Jeu"}</p>
+                <h3>{item.game.name}</h3>
+                <span>{item.location_id ? locationNames.get(item.location_id) ?? "Lieu inconnu" : "Sans lieu"}</span>
+              </article>
+            ))
+          ) : (
+            <button type="button" className="recent-game-card recent-game-empty" onClick={onCatalogOpen}>
+              <span className="stat-icon-box">
+                <PlusIcon />
+              </span>
+              <h3>Ajouter votre premier jeu</h3>
+              <p>{catalogTotal} references disponibles</p>
+            </button>
+          )}
+        </div>
+      </section>
+
+      <section className="dashboard-section">
+        <div className="section-heading-row">
+          <div>
+            <h2>Lieux principaux</h2>
+          </div>
+        </div>
+
+        <div className="primary-location-list">
+          {locationSummaries.length > 0 ? (
+            locationSummaries.map((location) => (
+              <button key={location.id} type="button" className="primary-location-row" onClick={() => onNavigate("games")}>
+                <span className="location-row-icon">
+                  <LocationIcon />
+                </span>
+                <span>
+                  <strong>{location.name}</strong>
+                  <small>{location.count > 1 ? `${location.count} jeux stockes` : `${location.count} jeu stocke`}</small>
+                </span>
+                <span aria-hidden="true">›</span>
+              </button>
+            ))
+          ) : (
+            <button type="button" className="primary-location-row" onClick={() => onNavigate("games")}>
+              <span className="location-row-icon">
+                <LocationIcon />
+              </span>
+              <span>
+                <strong>Aucun lieu</strong>
+                <small>Creez votre premier ecosysteme de rangement</small>
+              </span>
+              <span aria-hidden="true">›</span>
+            </button>
+          )}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function LocationsManagerSection(props: {
+  board: CollectionBoard | null;
+  hasLoadedOnce: boolean;
+  isCreatingLocation: boolean;
+  isCollectionLoading: boolean;
+  locationDraft: string;
+  onCreateLocation: (event: FormEvent<HTMLFormElement>) => void;
+  onDeleteLocation: (location: UserLocation) => void;
+  onLocationDraftChange: (value: string) => void;
+  onRenameLocation: (location: UserLocation) => void;
+}) {
+  const {
+    board,
+    hasLoadedOnce,
+    isCreatingLocation,
+    isCollectionLoading,
+    locationDraft,
+    onCreateLocation,
+    onDeleteLocation,
+    onLocationDraftChange,
+    onRenameLocation,
+  } = props;
+  const locations = board?.locations ?? [];
+
+  return (
+    <section className="panel collection-actions">
+      <div className="section-intro compact">
+        <h2>Mes lieux</h2>
+      </div>
+
+      <form className="entity-form location-form" onSubmit={onCreateLocation}>
+        <input
+          aria-label="Mes lieux"
+          value={locationDraft}
+          onChange={(event) => onLocationDraftChange(event.target.value)}
+          placeholder="Ajouter un lieu"
+        />
+        <button
+          type="submit"
+          className="primary-button icon-button"
+          disabled={isCreatingLocation}
+          aria-label={isCreatingLocation ? "Creation du lieu en cours" : "Ajouter le lieu"}
+          title={isCreatingLocation ? "Creation..." : "Ajouter"}
+        >
+          <PlusIcon />
+        </button>
+      </form>
+
+      {!hasLoadedOnce || isCollectionLoading ? (
+        <div className="empty-state compact">
+          <h3>Chargement</h3>
+          <p>Recuperation de vos lieux.</p>
+        </div>
+      ) : locations.length === 0 ? (
+        <div className="empty-state compact">
+          <h3>Aucun lieu</h3>
+          <p>Les jeux sans lieu restent disponibles dans la colonne Sans lieu.</p>
+        </div>
+      ) : (
+        <div className="managed-location-list">
+          {locations.map((location) => (
+            <article key={location.id} className="managed-location-row">
+              <div className="managed-location-copy">
+                <span className="location-row-icon" aria-hidden="true">
+                  <LocationIcon />
+                </span>
+                <div>
+                  <strong>{location.name}</strong>
+                  <small>
+                    {(board?.items.filter((item) => item.location_id === location.id).length ?? 0) > 1
+                      ? `${board?.items.filter((item) => item.location_id === location.id).length ?? 0} jeux`
+                      : `${board?.items.filter((item) => item.location_id === location.id).length ?? 0} jeu`}
+                  </small>
+                </div>
+              </div>
+              <div className="row-actions">
+                <button
+                  type="button"
+                  className="secondary-button icon-button"
+                  onClick={() => onRenameLocation(location)}
+                  aria-label={`Modifier le lieu ${location.name}`}
+                  title="Modifier"
+                >
+                  <PencilIcon />
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button icon-button danger-icon"
+                  onClick={() => onDeleteLocation(location)}
+                  aria-label={`Supprimer le lieu ${location.name}`}
+                  title="Supprimer"
+                >
+                  <TrashIcon />
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CollectionGamesSection(props: {
+  board: CollectionBoard | null;
+  hasLoadedOnce: boolean;
+  isCollectionLoading: boolean;
+  search: string;
+  onRemoveGame: (item: CollectionItem) => void;
+  onSearchClear: () => void;
+  onSearchChange: (value: string) => void;
+}) {
+  const {
+    board,
+    hasLoadedOnce,
+    isCollectionLoading,
+    search,
+    onRemoveGame,
+    onSearchClear,
+    onSearchChange,
+  } = props;
+  const [hoveredGameId, setHoveredGameId] = useState<number | null>(null);
+  const normalizedSearch = search.trim().toLowerCase();
+  const items = (board?.items ?? [])
+    .filter((item) => (normalizedSearch ? item.game.name.toLowerCase().includes(normalizedSearch) : true))
+    .sort((left, right) => left.game.name.localeCompare(right.game.name, "fr"));
+  const locationNames = new Map((board?.locations ?? []).map((location) => [location.id, location.name]));
+
+  return (
+    <section className="games-layout">
+      <section className="panel games-search">
+        <label className="games-search-field">
+          <span>Recherche</span>
+          <input
+            aria-label="Rechercher dans mes jeux"
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Nom du jeu"
+          />
+        </label>
+      </section>
+
+      <section className="panel collection-actions">
+        <div className="section-intro compact">
+          <h2>Mes jeux</h2>
+        </div>
+      </section>
+
+      {!hasLoadedOnce || isCollectionLoading ? (
+        <section className="loading-card">
+          <h2>Chargement</h2>
+          <p>Recuperation de votre collection.</p>
+        </section>
+      ) : items.length === 0 ? (
+        <section className="panel empty-state">
+          <h3>{search.trim() ? "Aucun jeu trouve" : "Aucun jeu dans votre collection"}</h3>
+          <p>{search.trim() ? "Essayez une autre recherche." : "Votre collection est vide."}</p>
+          {search.trim() ? (
+            <button type="button" className="secondary-button" onClick={onSearchClear}>
+              Effacer la recherche
+            </button>
+          ) : null}
+        </section>
+      ) : (
+        <section className="collection-game-grid">
+          {items.map((item) => (
+            <article key={item.id} className="panel collection-card collection-game-tile">
+              <div className="collection-card-media">
+                {item.game.image_url ? (
+                  <img src={item.game.image_url} alt={item.game.name} loading="lazy" />
+                ) : (
+                  <div className="collection-card-fallback" aria-hidden="true">
+                    {item.game.name.slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+              </div>
+              <div className="collection-card-title">
+                <GameNameCell
+                  game={item.game}
+                  isVisible={hoveredGameId === item.id}
+                  onHoverEnd={() => setHoveredGameId((current) => (current === item.id ? null : current))}
+                  onHoverStart={() => setHoveredGameId(item.id)}
+                />
+              </div>
+              <div className="collection-card-facts">
+                <CompactGameFact kind="players" label="Nombre de joueurs" value={formatPlayers(item.game)} />
+                <CompactGameFact kind="duration" label="Duree" value={formatDuration(item.game.duration_minutes)} />
+              </div>
+              <p className="collection-card-copy">Lieu : {item.location_id ? locationNames.get(item.location_id) ?? "Lieu inconnu" : "Sans lieu"}</p>
+              <button type="button" className="secondary-button compact-button" onClick={() => onRemoveGame(item)}>
+                Retirer de ma collection
+              </button>
+            </article>
+          ))}
+        </section>
+      )}
+    </section>
   );
 }
 
@@ -734,6 +1384,127 @@ function AuthenticationShell(props: {
           </button>
         ) : null}
       </section>
+    </div>
+  );
+}
+
+function ToastViewport({
+  notifications,
+  onDismiss,
+}: {
+  notifications: ToastNotification[];
+  onDismiss: (id: number) => void;
+}) {
+  if (notifications.length === 0) {
+    return null;
+  }
+
+  return createPortal(
+    <section className="toast-viewport" aria-label="Notifications">
+      {notifications.map((notification) => (
+        <article
+          key={notification.id}
+          className={`toast toast-${notification.tone}`}
+          role={notification.tone === "error" ? "alert" : "status"}
+        >
+          <div className="toast-copy">
+            <p className="toast-title">{notification.tone === "error" ? "Attention" : "Notification"}</p>
+            <p>{notification.text}</p>
+          </div>
+          <button
+            type="button"
+            className="toast-dismiss"
+            onClick={() => onDismiss(notification.id)}
+            aria-label="Fermer la notification"
+          >
+            x
+          </button>
+        </article>
+      ))}
+    </section>,
+    document.body,
+  );
+}
+
+function NotificationBell({
+  notifications,
+  onMarkRead,
+  unreadCount,
+}: {
+  notifications: ToastNotification[];
+  onMarkRead: () => void;
+  unreadCount: number;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      onMarkRead();
+    }
+  }, [isOpen, notifications.length, onMarkRead]);
+
+  function toggleMenu() {
+    setIsOpen((current) => !current);
+  }
+
+  return (
+    <div className="notification-menu" ref={menuRef}>
+      <button
+        type="button"
+        className="top-icon-button notification-trigger"
+        aria-label={unreadCount > 0 ? `${unreadCount} notification(s) non lue(s)` : "Notifications"}
+        aria-expanded={isOpen}
+        onClick={toggleMenu}
+      >
+        <BellIcon />
+        {unreadCount > 0 ? <span className="notification-badge">{unreadCount}</span> : null}
+      </button>
+
+      {isOpen ? (
+        <section className="notification-panel" aria-label="Notifications recentes">
+          <div className="notification-panel-header">
+            <h2>Notifications</h2>
+          </div>
+
+          {notifications.length === 0 ? (
+            <p className="notification-empty">Aucune notification pour le moment.</p>
+          ) : (
+            <div className="notification-list">
+              {notifications.map((notification) => (
+                <article key={notification.id} className={`notification-item notification-item-${notification.tone}`}>
+                  <p className="notification-item-title">
+                    {notification.tone === "error" ? "Attention" : "Information"}
+                  </p>
+                  <p>{notification.text}</p>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -831,24 +1602,19 @@ function GamesSection(props: {
   return (
     <section className="games-layout">
       <section className="panel games-search">
-        <label className="games-search-field">
-          <span>Recherche</span>
+        <label className="games-search-field games-search-field-icon">
+          <SearchIcon />
           <input
             aria-label="Rechercher un jeu"
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}
-            placeholder="Nom du jeu"
+            placeholder="Rechercher un jeu..."
           />
         </label>
       </section>
 
       <section className="panel games-content">
         <div className="games-controls">
-          <div className="games-results-copy" aria-live="polite">
-            <strong>{totalGames}</strong>
-            <span>{totalGames > 1 ? "jeux dans le catalogue" : "jeu dans le catalogue"}</span>
-          </div>
-
           <label className="games-inline-control">
             <span>Trier la liste</span>
             <select value={sortValue} onChange={(event) => onSortChange(event.target.value as GameSortValue)}>
@@ -993,81 +1759,40 @@ function GamesSection(props: {
   );
 }
 
-function CollectionSection(props: {
+function LocationsSection(props: {
   board: CollectionBoard | null;
   hasLoadedOnce: boolean;
-  isCreatingLocation: boolean;
   isCollectionLoading: boolean;
-  locationDraft: string;
   search: string;
-  onCreateLocation: (event: FormEvent<HTMLFormElement>) => void;
-  onLocationDraftChange: (value: string) => void;
   onMoveGame: (collectionGameId: number, locationId: number | null) => void;
   onNavigateToCatalog: () => void;
+  onRemoveGame: (item: CollectionItem) => void;
   onSearchClear: () => void;
-  onSearchChange: (value: string) => void;
 }) {
   const {
     board,
     hasLoadedOnce,
-    isCreatingLocation,
     isCollectionLoading,
-    locationDraft,
     search,
-    onCreateLocation,
-    onLocationDraftChange,
     onMoveGame,
     onNavigateToCatalog,
+    onRemoveGame,
     onSearchClear,
-    onSearchChange,
   } = props;
   const normalizedSearch = search.trim().toLowerCase();
   const locations = [{ id: null, name: "Sans lieu" }, ...(board?.locations ?? [])];
   const items = (board?.items ?? []).filter((item) =>
     normalizedSearch ? item.game.name.toLowerCase().includes(normalizedSearch) : true,
   );
-  const totalGames = items.length;
   const hasBoardStructure = (board?.items.length ?? 0) > 0 || (board?.locations.length ?? 0) > 0;
   const locationOptions = locations.map((location) => ({ id: location.id, name: location.name }));
 
   return (
     <section className="games-layout">
-      <section className="panel games-search">
-        <label className="games-search-field">
-          <span>Recherche</span>
-          <input
-            aria-label="Rechercher un jeu dans ma collection"
-            value={search}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder="Nom du jeu dans ma collection"
-          />
-        </label>
-      </section>
-
-      <section className="panel collection-actions">
-        <div className="section-intro compact">
-          <h2>Lieux de rangement</h2>
-          <p>Classez vos jeux par etagere, piece ou sac de transport.</p>
-        </div>
-        <form className="entity-form" onSubmit={onCreateLocation}>
-          <Field label="Nouveau lieu">
-            <input
-              value={locationDraft}
-              onChange={(event) => onLocationDraftChange(event.target.value)}
-              placeholder="Ex. Salon, Kallax, Ludotheque"
-            />
-          </Field>
-          <button type="submit" className="primary-button" disabled={isCreatingLocation}>
-            {isCreatingLocation ? "Creation..." : "Creer le lieu"}
-          </button>
-        </form>
-      </section>
-
       <section className="panel games-content">
         <div className="games-controls">
-          <div className="games-results-copy" aria-live="polite">
-            <strong>{totalGames}</strong>
-            <span>{totalGames > 1 ? "jeux visibles dans la collection" : "jeu visible dans la collection"}</span>
+          <div className="section-intro compact">
+            <h2>Rangement par lieu</h2>
           </div>
         </div>
 
@@ -1107,6 +1832,7 @@ function CollectionSection(props: {
                   locationName={location.name}
                   locationOptions={locationOptions}
                   onMoveGame={onMoveGame}
+                  onRemoveGame={onRemoveGame}
                   targetLocationId={location.id}
                 />
               ))}
@@ -1123,11 +1849,12 @@ function CollectionLocationColumn(props: {
   locationName: string;
   locationOptions: { id: number | null; name: string }[];
   onMoveGame: (collectionGameId: number, locationId: number | null) => void;
+  onRemoveGame: (item: CollectionItem) => void;
   targetLocationId: number | null;
 }) {
   const [hoveredGameId, setHoveredGameId] = useState<number | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
-  const { items, locationName, locationOptions, onMoveGame, targetLocationId } = props;
+  const { items, locationName, locationOptions, onMoveGame, onRemoveGame, targetLocationId } = props;
 
   function handleDrop(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
@@ -1184,7 +1911,14 @@ function CollectionLocationColumn(props: {
                   event.dataTransfer.setData("text/plain", String(item.id));
                 }}
               >
-                <div className="collection-card-media">
+                <div
+                  className="collection-card-media"
+                  onMouseEnter={() => setHoveredGameId(item.id)}
+                  onMouseLeave={() => setHoveredGameId((current) => (current === item.id ? null : current))}
+                  onFocus={() => setHoveredGameId(item.id)}
+                  onBlur={() => setHoveredGameId((current) => (current === item.id ? null : current))}
+                  tabIndex={0}
+                >
                   {item.game.image_url ? (
                     <img src={item.game.image_url} alt={item.game.name} loading="lazy" />
                   ) : (
@@ -1209,11 +1943,9 @@ function CollectionLocationColumn(props: {
                   <CompactGameFact kind="players" label="Nombre de joueurs" value={formatPlayers(item.game)} />
                   <CompactGameFact kind="duration" label="Duree" value={formatDuration(item.game.duration_minutes)} />
                 </div>
-                <p className="collection-card-copy">Auteurs : {joinNames(item.game.authors)}</p>
-                <p className="collection-card-copy">Editeurs : {joinNames(item.game.editors)}</p>
                 <label className="move-control">
-                  <span>Deplacer vers</span>
                   <select
+                    aria-label={`Deplacer ${item.game.name}`}
                     value={String(item.location_id ?? "")}
                     onChange={(event) => {
                       const value = event.target.value;
@@ -1227,6 +1959,9 @@ function CollectionLocationColumn(props: {
                     ))}
                   </select>
                 </label>
+                <button type="button" className="secondary-button compact-button" onClick={() => onRemoveGame(item)}>
+                  Retirer
+                </button>
               </article>
             ))
         )}
@@ -1252,12 +1987,168 @@ function CompactGameFact({
   );
 }
 
-function ProfileIcon() {
+function ProfileSettingsPanel({ onSignOut, user }: { onSignOut: () => void; user: AuthenticatedUser }) {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="profile-trigger-icon">
+    <section className="panel profile-settings-panel">
+      <div className="profile-dropdown-header">
+        <div className="profile-dropdown-avatar" aria-hidden="true">
+          {user.image ? <img src={user.image} alt="" /> : <span>{getUserInitial(user)}</span>}
+        </div>
+        <div className="profile-dropdown-copy">
+          <p className="eyebrow">Profil</p>
+          <strong>{user.name || "Utilisateur Google"}</strong>
+          <span>{user.email || "Adresse e-mail indisponible"}</span>
+        </div>
+      </div>
+
+      <button type="button" className="secondary-button profile-signout" onClick={onSignOut}>
+        Se deconnecter
+      </button>
+    </section>
+  );
+}
+
+function NavIcon({ kind }: { kind: NavigationItem["key"] }) {
+  if (kind === "home") {
+    return <HomeIcon />;
+  }
+
+  if (kind === "catalog" || kind === "games") {
+    return <GamesIcon />;
+  }
+
+  if (kind === "locations") {
+    return <LocationIcon />;
+  }
+
+  return <SettingsIcon />;
+}
+
+function HomeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="nav-icon">
       <path
-        d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z"
-        fill="currentColor"
+        d="M4 11.5 12 4l8 7.5V20a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1v-8.5Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function GamesIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="nav-icon">
+      <path
+        d="M6 4h10a2 2 0 0 1 2 2v14H8a2 2 0 0 1-2-2V4Zm0 14a2 2 0 0 1 2-2h10M9 7h6"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function LocationIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="nav-icon">
+      <path
+        d="M12 21s7-5.1 7-11a7 7 0 1 0-14 0c0 5.9 7 11 7 11Zm0-8.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="nav-icon">
+      <path
+        d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm7.4 4.8a7.7 7.7 0 0 0 0-2.6l2-1.5-2-3.4-2.4 1a8 8 0 0 0-2.2-1.3L14.5 3h-5l-.3 2.5A8 8 0 0 0 7 6.8l-2.4-1-2 3.4 2 1.5a7.7 7.7 0 0 0 0 2.6l-2 1.5 2 3.4 2.4-1a8 8 0 0 0 2.2 1.3l.3 2.5h5l.3-2.5a8 8 0 0 0 2.2-1.3l2.4 1 2-3.4-2-1.5Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="button-icon">
+      <path
+        d="m19 19-4.2-4.2m1.7-4.3a6 6 0 1 1-12 0 6 6 0 0 1 12 0Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function BellIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="button-icon">
+      <path
+        d="M7.5 10.5a4.5 4.5 0 1 1 9 0c0 4 1.5 4.6 1.5 6H6c0-1.4 1.5-2 1.5-6ZM10 19h4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="button-icon">
+      <path
+        d="M12 5v14M5 12h14"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="button-icon">
+      <path
+        d="m4 20 4.4-1 10.1-10.1a2.1 2.1 0 0 0-3-3L5.4 16 4 20ZM14.2 7.2l2.6 2.6"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="button-icon">
+      <path
+        d="M5 7h14M10 11v6M14 11v6M8 7l1-3h6l1 3M7 7l1 13h8l1-13"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
       />
     </svg>
   );
@@ -1445,6 +2336,7 @@ function EntitiesSection(props: {
   onDeleteReference: (kind: ReferenceKey, id: number) => Promise<void>;
   onDraftChange: (updater: (current: ReferenceDrafts) => ReferenceDrafts) => void;
   onReferencePageChange: (kind: ReferenceKey, pageNumber: number) => void;
+  onRenameReference: (kind: ReferenceKey, id: number, name: string) => Promise<void>;
   onSelectReference: (kind: ReferenceKey) => void;
 }) {
   const {
@@ -1459,8 +2351,23 @@ function EntitiesSection(props: {
     onDeleteReference,
     onDraftChange,
     onReferencePageChange,
+    onRenameReference,
     onSelectReference,
   } = props;
+
+  function promptRenameReference(kind: ReferenceKey, item: NamedEntity) {
+    const name = window.prompt(`Renommer ${item.name}`, item.name);
+    if (name === null) {
+      return;
+    }
+
+    const trimmedName = name.trim();
+    if (!trimmedName || trimmedName === item.name) {
+      return;
+    }
+
+    void onRenameReference(kind, item.id, trimmedName);
+  }
 
   return (
     <section className="entities-layout">
@@ -1491,32 +2398,24 @@ function EntitiesSection(props: {
 
               {isOpen ? (
                 <div className="entity-panel-body">
-                  <div className="section-intro compact">
-                    <p className="eyebrow">Administration</p>
-                    <h2>{referenceTitles[kind]}</h2>
-                    <p>Gerez les noms utilises dans les fiches jeux.</p>
-                  </div>
-
                   <form className="entity-form" onSubmit={(event) => void onCreateReference(kind, event)}>
-                    <Field label="Nouveau nom">
-                      <input
-                        value={drafts[kind]}
-                        onChange={(event) => onDraftChange((current) => ({ ...current, [kind]: event.target.value }))}
-                        placeholder={`Ajouter un ${referenceTitles[kind].slice(0, -1).toLowerCase()}`}
-                      />
-                    </Field>
-                    <button type="submit" className="primary-button">
-                      Ajouter
+                    <input
+                      value={drafts[kind]}
+                      aria-label={`Ajouter un ${referenceTitles[kind].slice(0, -1).toLowerCase()}`}
+                      onChange={(event) => onDraftChange((current) => ({ ...current, [kind]: event.target.value }))}
+                      placeholder={`Ajouter un ${referenceTitles[kind].slice(0, -1).toLowerCase()}`}
+                    />
+                    <button
+                      type="submit"
+                      className="primary-button icon-button entity-add-button"
+                      aria-label={`Ajouter un ${referenceTitles[kind].slice(0, -1).toLowerCase()}`}
+                      title={`Ajouter un ${referenceTitles[kind].slice(0, -1).toLowerCase()}`}
+                    >
+                      <PlusIcon />
                     </button>
                   </form>
 
                   <div className="simple-table">
-                    <div className="simple-head">
-                      <span>ID</span>
-                      <span>Nom</span>
-                      <span>Action</span>
-                    </div>
-
                     {isLoading && !hasLoaded ? (
                       <div className="empty-state compact">
                         <h3>Chargement</h3>
@@ -1530,15 +2429,27 @@ function EntitiesSection(props: {
                     ) : (
                       references[kind].map((item) => (
                         <div key={item.id} className="simple-row">
-                          <span>{item.id}</span>
-                          <span>{item.name}</span>
-                          <button
-                            type="button"
-                            className="link-button danger"
-                            onClick={() => void onDeleteReference(kind, item.id)}
-                          >
-                            Supprimer
-                          </button>
+                          <span className="simple-row-name">{item.name}</span>
+                          <div className="entity-row-actions">
+                            <button
+                              type="button"
+                              className="icon-button secondary-button"
+                              onClick={() => promptRenameReference(kind, item)}
+                              aria-label={`Modifier ${item.name}`}
+                              title={`Modifier ${item.name}`}
+                            >
+                              <PencilIcon />
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-button secondary-button danger-icon"
+                              onClick={() => void onDeleteReference(kind, item.id)}
+                              aria-label={`Supprimer ${item.name}`}
+                              title={`Supprimer ${item.name}`}
+                            >
+                              <TrashIcon />
+                            </button>
+                          </div>
                         </div>
                       ))
                     )}
@@ -1634,6 +2545,11 @@ function buildPaginationItems(currentPage: number, totalPages: number) {
 function getUserInitial(user: AuthenticatedUser) {
   const label = user.name?.trim() || user.email?.trim() || "L";
   return label.slice(0, 1).toUpperCase();
+}
+
+function getUserFirstName(user: AuthenticatedUser) {
+  const label = user.name?.trim() || user.email?.split("@")[0]?.trim() || "joueur";
+  return label.split(/\s+/)[0] || "joueur";
 }
 
 export default App;
