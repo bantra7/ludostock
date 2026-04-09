@@ -13,6 +13,40 @@ AUTH_EXEMPT_PATHS = frozenset(
         "/api/meta/version/",
     }
 )
+ADMIN_EMAIL = "renault.jbapt@gmail.com"
+ADMIN_ONLY_PATH_PREFIXES = (
+    "/api/users/",
+    "/api/collections/",
+    "/api/collection_shares/",
+    "/api/user_locations/",
+    "/api/collection_games/",
+)
+ADMIN_ONLY_REFERENCE_PREFIXES = (
+    "/api/authors/",
+    "/api/artists/",
+    "/api/editors/",
+    "/api/distributors/",
+    "/api/games/",
+)
+
+
+def is_admin_user(user: dict[str, Any] | None) -> bool:
+    """Return whether the authenticated user can administer the global catalog."""
+    email = user.get("email") if isinstance(user, dict) else None
+    return isinstance(email, str) and email.casefold() == ADMIN_EMAIL.casefold()
+
+
+def requires_admin_access(path: str, method: str) -> bool:
+    """Return whether an API request targets global data reserved to the administrator."""
+    if path.startswith("/api/me/collection/"):
+        return False
+    if any(path.startswith(prefix) for prefix in ADMIN_ONLY_PATH_PREFIXES):
+        return True
+    if method in {"POST", "PUT", "PATCH", "DELETE"} and any(
+        path.startswith(prefix) for prefix in ADMIN_ONLY_REFERENCE_PREFIXES
+    ):
+        return True
+    return False
 
 
 async def get_authenticated_session(request: Request) -> dict[str, Any]:

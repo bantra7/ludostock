@@ -5,6 +5,7 @@ import { authClient } from "./auth-client";
 import { navItems, referenceEndpoints, referenceNavItems, referenceTitles } from "./types";
 import type {
   CollectionBoard,
+  CollectionGame,
   CollectionItem,
   Game,
   GamePage,
@@ -13,6 +14,7 @@ import type {
   ReferenceCollection,
   ReferenceDrafts,
   ReferenceKey,
+  UserLocation,
 } from "./types";
 
 const DEFAULT_GAME_PAGE_SIZE = 50;
@@ -20,6 +22,7 @@ const REFERENCE_PAGE_SIZE = 25;
 const GAME_PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
 const FRONTEND_VERSION = __APP_VERSION__;
 const AUTH_SESSION_TIMEOUT_MS = 8000;
+const ADMIN_EMAIL = "renault.jbapt@gmail.com";
 const GAME_SORT_OPTIONS = [
   { value: "name:asc", label: "Nom (A-Z)", sortBy: "name", sortDir: "asc" },
   { value: "name:desc", label: "Nom (Z-A)", sortBy: "name", sortDir: "desc" },
@@ -39,6 +42,13 @@ const GAME_SORT_OPTIONS = [
 
 type GameSortValue = (typeof GAME_SORT_OPTIONS)[number]["value"];
 type FlashMessage = { tone: "success" | "error"; text: string };
+type ConfirmDialog = {
+  body: string;
+  confirmLabel?: string;
+  isDanger?: boolean;
+  onConfirm: () => void;
+  title: string;
+};
 type AuthenticatedUser = {
   email?: string | null;
   image?: string | null;
@@ -220,8 +230,14 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   const [isCollectionLoading, setIsCollectionLoading] = useState(false);
   const [hasLoadedCollectionOnce, setHasLoadedCollectionOnce] = useState(false);
   const [collectionSearch, setCollectionSearch] = useState("");
+  const [locationDraft, setLocationDraft] = useState("");
+  const [isCreatingLocation, setIsCreatingLocation] = useState(false);
+  const [pendingCollectionGameIds, setPendingCollectionGameIds] = useState<number[]>([]);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialog | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
-  const activeNavItem = navItems.find((item) => item.key === activeNav) ?? navItems[0];
+  const isReferenceAdmin = user.email?.toLowerCase() === ADMIN_EMAIL;
+  const visibleNavItems = navItems.filter((item) => isReferenceAdmin || item.key !== "references");
+  const activeNavItem = visibleNavItems.find((item) => item.key === activeNav) ?? visibleNavItems[0];
   const sectionDescriptions: Record<NavKey, string> = {
     games: "Parcourez et filtrez le catalogue Ludostock.",
     collection: "Consultez et enrichissez votre collection personnelle.",
@@ -235,6 +251,10 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   useEffect(() => {
     void loadGamesPage(currentPage);
   }, [currentPage, deferredSearch, gamePageSize, gameSort, gamesRefreshToken]);
+
+  useEffect(() => {
+    void loadCollectionBoard();
+  }, []);
 
   useEffect(() => {
     if (activeNav !== "collection") {
@@ -275,6 +295,12 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
     setIsProfileMenuOpen(false);
   }, [activeNav]);
 
+  useEffect(() => {
+    if (!isReferenceAdmin && activeNav === "references") {
+      setActiveNav("collection");
+    }
+  }, [activeNav, isReferenceAdmin]);
+
   async function loadGamesPage(pageNumber: number) {
     setIsGamesLoading(true);
     try {
@@ -308,6 +334,11 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
 
   async function createReference(kind: ReferenceKey, event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!isReferenceAdmin) {
+      setMessage({ tone: "error", text: "Seul l'administrateur peut modifier les referentiels." });
+      return;
+    }
+
     const name = referenceDrafts[kind].trim();
     if (!name) {
       setMessage({ tone: "error", text: `Le nom pour ${referenceTitles[kind].toLowerCase()} est requis.` });
@@ -330,15 +361,46 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   }
 
   async function deleteReference(kind: ReferenceKey, id: number) {
+    if (!isReferenceAdmin) {
+      setMessage({ tone: "error", text: "Seul l'administrateur peut modifier les referentiels." });
+      return;
+    }
+
     const item = references[kind].find((entry) => entry.id === id);
     if (!item) {
       return;
     }
 
-    if (!window.confirm(`Supprimer ${item.name} du referentiel ${referenceTitles[kind].toLowerCase()} ?`)) {
+    setConfirmDialog({
+      title: `Supprimer ${item.name} ?`,
+      body: `Cette entree sera retiree du referentiel ${referenceTitles[kind].toLowerCase()} et des jeux qui l'utilisent.`,
+      confirmLabel: "Supprimer",
+      isDanger: true,
+      onConfirm: () => void confirmDeleteReference(kind, id, item.name),
+    });
+  }
+
+  async function deleteGame(gameId: number) {
+    if (!isReferenceAdmin) {
+      setMessage({ tone: "error", text: "Seul l'administrateur peut supprimer un jeu du catalogue." });
       return;
     }
 
+    const game = games.find((entry) => entry.id === gameId);
+    if (!game) {
+      return;
+    }
+
+    setConfirmDialog({
+      title: `Supprimer ${game.name} ?`,
+      body: "Le jeu sera retire du catalogue Ludostock. Cette action peut aussi modifier les listes qui l'affichent.",
+      confirmLabel: "Supprimer le jeu",
+      isDanger: true,
+      onConfirm: () => void confirmDeleteGame(gameId, game.name),
+    });
+  }
+
+  async function confirmDeleteReference(kind: ReferenceKey, id: number, name: string) {
     try {
       await request(`/${referenceEndpoints[kind]}/${id}`, { method: "DELETE" });
       setGames((current) =>
@@ -350,32 +412,27 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       const nextPage =
         references[kind].length === 1 && referencePages[kind] > 1 ? referencePages[kind] - 1 : referencePages[kind];
       await loadReferencePage(kind, nextPage);
-      setMessage({ tone: "success", text: `${item.name} a ete supprime.` });
+      setMessage({ tone: "success", text: `${name} a ete supprime.` });
     } catch (error) {
       setMessage({ tone: "error", text: getErrorMessage(error) });
     }
   }
 
-  async function deleteGame(gameId: number) {
-    const game = games.find((entry) => entry.id === gameId);
-    if (!game) {
-      return;
-    }
-
-    if (!window.confirm(`Supprimer le jeu ${game.name} ?`)) {
-      return;
-    }
-
+  async function confirmDeleteGame(gameId: number, name: string) {
     try {
       await request(`/games/${gameId}`, { method: "DELETE" });
       setGamesRefreshToken((current) => current + 1);
-      setMessage({ tone: "success", text: `${game.name} a ete supprime.` });
+      if (hasLoadedCollectionOnce) {
+        await loadCollectionBoard();
+      }
+      setMessage({ tone: "success", text: `${name} a ete supprime.` });
     } catch (error) {
       setMessage({ tone: "error", text: getErrorMessage(error) });
     }
   }
 
   async function moveCollectionGame(collectionGameId: number, locationId: number | null) {
+    const targetLocation = collectionBoard?.locations.find((location) => location.id === locationId);
     try {
       await request(`/me/collection/games/${collectionGameId}`, {
         method: "PATCH",
@@ -391,8 +448,53 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
             }
           : current,
       );
+      setMessage({ tone: "success", text: `Jeu deplace vers ${targetLocation?.name ?? "Sans lieu"}.` });
     } catch (error) {
       setMessage({ tone: "error", text: getErrorMessage(error) });
+    }
+  }
+
+  async function addGameToCollection(gameId: number) {
+    const game = games.find((entry) => entry.id === gameId);
+    setPendingCollectionGameIds((current) => (current.includes(gameId) ? current : [...current, gameId]));
+
+    try {
+      await request<CollectionGame>("/me/collection/games/", {
+        method: "POST",
+        body: JSON.stringify({ game_id: gameId }),
+      });
+      if (activeNav === "collection" || hasLoadedCollectionOnce) {
+        await loadCollectionBoard();
+      }
+      setMessage({ tone: "success", text: `${game?.name ?? "Ce jeu"} a ete ajoute a votre collection.` });
+    } catch (error) {
+      setMessage({ tone: "error", text: getErrorMessage(error) });
+    } finally {
+      setPendingCollectionGameIds((current) => current.filter((id) => id !== gameId));
+    }
+  }
+
+  async function createCollectionLocation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = locationDraft.trim();
+    if (!name) {
+      setMessage({ tone: "error", text: "Le nom du lieu est requis." });
+      return;
+    }
+
+    setIsCreatingLocation(true);
+    try {
+      await request<UserLocation>("/me/collection/locations/", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      setLocationDraft("");
+      await loadCollectionBoard();
+      setMessage({ tone: "success", text: `Le lieu ${name} a ete cree.` });
+    } catch (error) {
+      setMessage({ tone: "error", text: getErrorMessage(error) });
+    } finally {
+      setIsCreatingLocation(false);
     }
   }
 
@@ -435,6 +537,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   const totalPages = Math.max(1, Math.ceil(totalGames / gamePageSize));
   const pageStart = totalGames === 0 ? 0 : (currentPage - 1) * gamePageSize + 1;
   const pageEnd = totalGames === 0 ? 0 : Math.min(currentPage * gamePageSize, totalGames);
+  const collectionGameIds = new Set(collectionBoard?.items.map((item) => item.game_id) ?? []);
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -447,7 +550,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
         </div>
 
         <nav className="nav-list" aria-label="Navigation principale">
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <button
               key={item.key}
               type="button"
@@ -532,9 +635,14 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
             sortValue={gameSort}
             totalGames={totalGames}
             totalPages={totalPages}
+            collectionGameIds={collectionGameIds}
+            pendingCollectionGameIds={pendingCollectionGameIds}
+            canAdministerCatalog={isReferenceAdmin}
+            onAddGameToCollection={addGameToCollection}
             onDeleteGame={deleteGame}
             onPageChange={setCurrentPage}
             onPageSizeChange={setGamePageSize}
+            onSearchClear={() => setSearch("")}
             onSearchChange={setSearch}
             onSortChange={setGameSort}
           />
@@ -545,13 +653,19 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
             board={collectionBoard}
             hasLoadedOnce={hasLoadedCollectionOnce}
             isCollectionLoading={isCollectionLoading}
+            isCreatingLocation={isCreatingLocation}
+            locationDraft={locationDraft}
             search={collectionSearch}
+            onCreateLocation={createCollectionLocation}
+            onLocationDraftChange={setLocationDraft}
             onMoveGame={moveCollectionGame}
+            onNavigateToCatalog={() => setActiveNav("games")}
+            onSearchClear={() => setCollectionSearch("")}
             onSearchChange={setCollectionSearch}
           />
         ) : null}
 
-        {hasLoadedOnce && activeNav === "references" ? (
+        {isReferenceAdmin && hasLoadedOnce && activeNav === "references" ? (
           <EntitiesSection
             activeReference={activeReference}
             drafts={referenceDrafts}
@@ -572,6 +686,18 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
           <span>Version {FRONTEND_VERSION}</span>
         </footer>
       </main>
+
+      {confirmDialog ? (
+        <ConfirmModal
+          dialog={confirmDialog}
+          onCancel={() => setConfirmDialog(null)}
+          onConfirm={() => {
+            const action = confirmDialog.onConfirm;
+            setConfirmDialog(null);
+            action();
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -612,38 +738,89 @@ function AuthenticationShell(props: {
   );
 }
 
+function ConfirmModal({
+  dialog,
+  onCancel,
+  onConfirm,
+}: {
+  dialog: ConfirmDialog;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return createPortal(
+    <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}>
+      <section
+        className="modal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-dialog-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="section-intro compact">
+          <p className="eyebrow">{dialog.isDanger ? "Action irreversible" : "Confirmation"}</p>
+          <h2 id="confirm-dialog-title">{dialog.title}</h2>
+          <p>{dialog.body}</p>
+        </div>
+        <div className="form-actions">
+          <button type="button" className="secondary-button" onClick={onCancel}>
+            Annuler
+          </button>
+          <button
+            type="button"
+            className={dialog.isDanger ? "danger-button" : "primary-button"}
+            onClick={onConfirm}
+          >
+            {dialog.confirmLabel ?? "Confirmer"}
+          </button>
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
 function GamesSection(props: {
+  canAdministerCatalog: boolean;
+  collectionGameIds: Set<number>;
   currentPage: number;
   games: Game[];
   isGamesLoading: boolean;
   pageEnd: number;
   pageSize: number;
+  pendingCollectionGameIds: number[];
   pageStart: number;
   search: string;
   sortValue: GameSortValue;
   totalGames: number;
   totalPages: number;
+  onAddGameToCollection: (gameId: number) => void;
   onDeleteGame: (gameId: number) => void;
   onPageChange: (page: number) => void;
   onPageSizeChange: (value: number) => void;
+  onSearchClear: () => void;
   onSearchChange: (value: string) => void;
   onSortChange: (value: GameSortValue) => void;
 }) {
   const [hoveredGameId, setHoveredGameId] = useState<number | null>(null);
   const {
+    canAdministerCatalog,
+    collectionGameIds,
     currentPage,
     games,
     isGamesLoading,
     pageEnd,
     pageSize,
+    pendingCollectionGameIds,
     pageStart,
     search,
     sortValue,
     totalGames,
     totalPages,
+    onAddGameToCollection,
     onDeleteGame,
     onPageChange,
     onPageSizeChange,
+    onSearchClear,
     onSearchChange,
     onSortChange,
   } = props;
@@ -690,6 +867,7 @@ function GamesSection(props: {
             <div>Annee</div>
             <div>Joueurs</div>
             <div>Duree</div>
+            <div>Collection</div>
           </div>
 
           <div className="table-body">
@@ -702,6 +880,11 @@ function GamesSection(props: {
               <div className="empty-state">
                 <h3>Aucun jeu</h3>
                 <p>Aucun jeu ne correspond a cette recherche.</p>
+                {search.trim() ? (
+                  <button type="button" className="secondary-button" onClick={onSearchClear}>
+                    Effacer la recherche
+                  </button>
+                ) : null}
               </div>
             ) : (
               games.map((game) => (
@@ -720,6 +903,25 @@ function GamesSection(props: {
                   </div>
                   <div>
                     <CompactGameFact kind="duration" label="Duree" value={formatDuration(game.duration_minutes)} />
+                  </div>
+                  <div className="row-actions">
+                    {collectionGameIds.has(game.id) ? (
+                      <span className="status-pill">Dans ma collection</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="secondary-button compact-button"
+                        disabled={pendingCollectionGameIds.includes(game.id)}
+                        onClick={() => onAddGameToCollection(game.id)}
+                      >
+                        {pendingCollectionGameIds.includes(game.id) ? "Ajout..." : "Ajouter"}
+                      </button>
+                    )}
+                    {canAdministerCatalog ? (
+                      <button type="button" className="link-button danger" onClick={() => onDeleteGame(game.id)}>
+                        Supprimer
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ))
@@ -794,17 +996,29 @@ function GamesSection(props: {
 function CollectionSection(props: {
   board: CollectionBoard | null;
   hasLoadedOnce: boolean;
+  isCreatingLocation: boolean;
   isCollectionLoading: boolean;
+  locationDraft: string;
   search: string;
+  onCreateLocation: (event: FormEvent<HTMLFormElement>) => void;
+  onLocationDraftChange: (value: string) => void;
   onMoveGame: (collectionGameId: number, locationId: number | null) => void;
+  onNavigateToCatalog: () => void;
+  onSearchClear: () => void;
   onSearchChange: (value: string) => void;
 }) {
   const {
     board,
     hasLoadedOnce,
+    isCreatingLocation,
     isCollectionLoading,
+    locationDraft,
     search,
+    onCreateLocation,
+    onLocationDraftChange,
     onMoveGame,
+    onNavigateToCatalog,
+    onSearchClear,
     onSearchChange,
   } = props;
   const normalizedSearch = search.trim().toLowerCase();
@@ -814,6 +1028,7 @@ function CollectionSection(props: {
   );
   const totalGames = items.length;
   const hasBoardStructure = (board?.items.length ?? 0) > 0 || (board?.locations.length ?? 0) > 0;
+  const locationOptions = locations.map((location) => ({ id: location.id, name: location.name }));
 
   return (
     <section className="games-layout">
@@ -827,6 +1042,25 @@ function CollectionSection(props: {
             placeholder="Nom du jeu dans ma collection"
           />
         </label>
+      </section>
+
+      <section className="panel collection-actions">
+        <div className="section-intro compact">
+          <h2>Lieux de rangement</h2>
+          <p>Classez vos jeux par etagere, piece ou sac de transport.</p>
+        </div>
+        <form className="entity-form" onSubmit={onCreateLocation}>
+          <Field label="Nouveau lieu">
+            <input
+              value={locationDraft}
+              onChange={(event) => onLocationDraftChange(event.target.value)}
+              placeholder="Ex. Salon, Kallax, Ludotheque"
+            />
+          </Field>
+          <button type="submit" className="primary-button" disabled={isCreatingLocation}>
+            {isCreatingLocation ? "Creation..." : "Creer le lieu"}
+          </button>
+        </form>
       </section>
 
       <section className="panel games-content">
@@ -852,17 +1086,26 @@ function CollectionSection(props: {
             <div className="empty-state">
               <h3>Collection vide</h3>
               <p>Ajoutez un jeu du catalogue pour commencer votre collection.</p>
+              <button type="button" className="primary-button" onClick={onNavigateToCatalog}>
+                Parcourir le catalogue
+              </button>
             </div>
           ) : (
             <>
               {items.length === 0 && search.trim() ? (
-                <p className="empty-inline">Aucun jeu ne correspond a votre recherche dans les lieux affiches.</p>
+                <div className="empty-inline">
+                  <p>Aucun jeu ne correspond a votre recherche dans les lieux affiches.</p>
+                  <button type="button" className="secondary-button compact-button" onClick={onSearchClear}>
+                    Effacer la recherche
+                  </button>
+                </div>
               ) : null}
               {locations.map((location) => (
                 <CollectionLocationColumn
                   key={location.id ?? "unassigned"}
                   items={items.filter((item) => item.location_id === location.id)}
                   locationName={location.name}
+                  locationOptions={locationOptions}
                   onMoveGame={onMoveGame}
                   targetLocationId={location.id}
                 />
@@ -878,12 +1121,13 @@ function CollectionSection(props: {
 function CollectionLocationColumn(props: {
   items: CollectionItem[];
   locationName: string;
+  locationOptions: { id: number | null; name: string }[];
   onMoveGame: (collectionGameId: number, locationId: number | null) => void;
   targetLocationId: number | null;
 }) {
   const [hoveredGameId, setHoveredGameId] = useState<number | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
-  const { items, locationName, onMoveGame, targetLocationId } = props;
+  const { items, locationName, locationOptions, onMoveGame, targetLocationId } = props;
 
   function handleDrop(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
@@ -924,7 +1168,7 @@ function CollectionLocationColumn(props: {
         {items.length === 0 ? (
           <div className="empty-state compact">
             <h3>Vide</h3>
-            <p>Deposez un jeu ici.</p>
+            <p>Deposez un jeu ici ou utilisez le menu d'une carte.</p>
           </div>
         ) : (
           items
@@ -967,6 +1211,22 @@ function CollectionLocationColumn(props: {
                 </div>
                 <p className="collection-card-copy">Auteurs : {joinNames(item.game.authors)}</p>
                 <p className="collection-card-copy">Editeurs : {joinNames(item.game.editors)}</p>
+                <label className="move-control">
+                  <span>Deplacer vers</span>
+                  <select
+                    value={String(item.location_id ?? "")}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      onMoveGame(item.id, value ? Number(value) : null);
+                    }}
+                  >
+                    {locationOptions.map((location) => (
+                      <option key={location.id ?? "unassigned"} value={location.id ?? ""}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </article>
             ))
         )}
@@ -1232,9 +1492,9 @@ function EntitiesSection(props: {
               {isOpen ? (
                 <div className="entity-panel-body">
                   <div className="section-intro compact">
-                    <p className="eyebrow">{referenceEndpoints[kind].toUpperCase()}</p>
+                    <p className="eyebrow">Administration</p>
                     <h2>{referenceTitles[kind]}</h2>
-                    <p>POST / GET / DELETE</p>
+                    <p>Gerez les noms utilises dans les fiches jeux.</p>
                   </div>
 
                   <form className="entity-form" onSubmit={(event) => void onCreateReference(kind, event)}>

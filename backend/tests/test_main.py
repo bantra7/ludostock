@@ -1,4 +1,5 @@
 from backend.app import main
+from backend.app import auth
 from types import SimpleNamespace
 
 
@@ -48,6 +49,27 @@ def test_get_version_returns_backend_metadata():
     response = main.get_version()
 
     assert response == {"name": "backend", "version": main.__version__}
+
+
+def test_admin_email_is_case_insensitive():
+    assert auth.is_admin_user({"email": "RENAULT.JBAPT@GMAIL.COM"})
+    assert not auth.is_admin_user({"email": "alice@example.com"})
+    assert not auth.is_admin_user({})
+
+
+def test_admin_guard_allows_personal_collection_and_catalog_reads():
+    assert not auth.requires_admin_access("/api/me/collection/games/", "POST")
+    assert not auth.requires_admin_access("/api/me/collection/locations/", "POST")
+    assert not auth.requires_admin_access("/api/games/", "GET")
+    assert not auth.requires_admin_access("/api/authors/1", "GET")
+
+
+def test_admin_guard_protects_global_catalog_writes_and_legacy_collection_routes():
+    assert auth.requires_admin_access("/api/games/", "POST")
+    assert auth.requires_admin_access("/api/games/1", "DELETE")
+    assert auth.requires_admin_access("/api/authors/", "POST")
+    assert auth.requires_admin_access("/api/collections/", "GET")
+    assert auth.requires_admin_access("/api/collection_games/1", "DELETE")
 
 
 def test_get_my_collection_games_delegates_to_personal_collection_crud(monkeypatch):

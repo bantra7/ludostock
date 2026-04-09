@@ -1,3 +1,12 @@
+### 1.4.0 (2026-04-09)
+
+* Ajout d'un parcours catalogue -> collection avec action `Ajouter`, badge `Dans ma collection` et rafraichissement du board personnel.
+* Ajout de la creation de lieux depuis `Ma collection` et d'un menu `Deplacer vers` en complement du drag-and-drop.
+* Remplacement des confirmations navigateur par une modale Ludostock pour les suppressions.
+* Amelioration des etats vides et de recherche avec actions de retour au catalogue ou de remise a zero.
+* Refonte responsive du catalogue sur mobile : lignes transformees en cartes, controles pleine largeur et board collection en colonne.
+* Restriction de l'administration du catalogue et des referentiels a `renault.jbapt@gmail.com`, avec garde backend, masquage frontend et tests dedies.
+
 ### 1.3.0 (2026-04-08)
 
 * Refonte de l'onglet `Ma collection` pour afficher une vue par lieux avec colonnes dediees.

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import __version__, crud, schemas
-from .auth import AUTH_EXEMPT_PATHS, get_authenticated_session
+from .auth import AUTH_EXEMPT_PATHS, get_authenticated_session, is_admin_user, requires_admin_access
 from .config import ALLOW_ORIGINS
 from .database import init_db
 
@@ -43,6 +43,9 @@ async def require_authentication(request: Request, call_next):
 
     request.state.user = session_payload.get("user")
     request.state.session = session_payload.get("session")
+    if requires_admin_access(request.url.path, request.method) and not is_admin_user(request.state.user):
+        return JSONResponse(status_code=403, content={"detail": "Administrator privileges required"})
+
     return await call_next(request)
 
 

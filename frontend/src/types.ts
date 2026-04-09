@@ -46,6 +46,14 @@ export type CollectionItem = {
   game: Game;
 };
 
+export type CollectionGame = {
+  id: number;
+  collection_id: number;
+  game_id: number;
+  location_id: number | null;
+  quantity: number | null;
+};
+
 export type CollectionBoard = {
   collection_id: number;
   locations: UserLocation[];
