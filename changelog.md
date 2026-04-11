@@ -1,3 +1,10 @@
+### 1.4.2 (2026-04-11)
+
+* Correction de la recherche rapide en barre superieure pour que le bouton `+` declenche bien l'ajout en collection sans fermer le panneau trop tot.
+* Renforcement des actions de `Ma collection` avec resynchronisation de l'etat depuis le backend apres ajout, retrait, deplacement et mise a jour des lieux.
+* Uniformisation du libelle `Retirer` dans les vues de collection.
+* Ajustement de l'affichage des images pour des miniatures moins imposantes et mieux cadrees dans la recherche rapide, les derniers ajouts et les cartes de collection.
+
 ### 1.4.1 (2026-04-09)
 
 * Separation de `Ma collection` et `Catalogue`, avec compteur du catalogue dans le titre et tri par defaut sur les annees decroissantes.

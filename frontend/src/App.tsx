@@ -313,6 +313,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   const [pendingCollectionGameIds, setPendingCollectionGameIds] = useState<number[]>([]);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialog | null>(null);
   const gamesCatalogRef = useRef<HTMLElement | null>(null);
+  const quickCatalogMenuRef = useRef<HTMLDivElement | null>(null);
   const isReferenceAdmin = user.email?.toLowerCase() === ADMIN_EMAIL;
   const visibleNavItems: NavigationItem[] = [
     { key: "home", label: "Accueil" },
@@ -381,6 +382,28 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       showToast(authMessage);
     }
   }, [authMessage, showToast]);
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      if (!quickCatalogMenuRef.current?.contains(event.target as Node)) {
+        setIsQuickCatalogSearchOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsQuickCatalogSearchOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
   useEffect(() => {
     if (activeNav !== "games" && activeNav !== "locations") {
@@ -559,22 +582,19 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   }
 
   async function moveCollectionGame(collectionGameId: number, locationId: number | null) {
+    const currentItem = collectionBoard?.items.find((item) => item.id === collectionGameId);
     const targetLocation = collectionBoard?.locations.find((location) => location.id === locationId);
+
+    if (currentItem?.location_id === locationId) {
+      return;
+    }
+
     try {
       await request(`/me/collection/games/${collectionGameId}`, {
         method: "PATCH",
         body: JSON.stringify({ location_id: locationId }),
       });
-      setCollectionBoard((current) =>
-        current
-          ? {
-              ...current,
-              items: current.items.map((item) =>
-                item.id === collectionGameId ? { ...item, location_id: locationId } : item,
-              ),
-            }
-          : current,
-      );
+      await loadCollectionBoard();
       showToast({ tone: "success", text: `Jeu deplace vers ${targetLocation?.name ?? "Sans lieu"}.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
@@ -622,14 +642,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   async function confirmRemoveGameFromCollection(collectionItem: CollectionItem) {
     try {
       await request(`/me/collection/games/${collectionItem.id}`, { method: "DELETE" });
-      setCollectionBoard((current) =>
-        current
-          ? {
-              ...current,
-              items: current.items.filter((item) => item.id !== collectionItem.id),
-            }
-          : current,
-      );
+      await loadCollectionBoard();
       showToast({ tone: "success", text: `${collectionItem.game.name} a ete retire de votre collection.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
@@ -677,14 +690,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
         method: "PATCH",
         body: JSON.stringify({ name }),
       });
-      setCollectionBoard((current) =>
-        current
-          ? {
-              ...current,
-              locations: current.locations.map((entry) => (entry.id === renamed.id ? renamed : entry)),
-            }
-          : current,
-      );
+      await loadCollectionBoard();
       showToast({ tone: "success", text: `Le lieu ${renamed.name} a ete enregistre.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
@@ -704,17 +710,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   async function confirmDeleteCollectionLocation(location: UserLocation) {
     try {
       await request<UserLocation>(`/me/collection/locations/${location.id}`, { method: "DELETE" });
-      setCollectionBoard((current) =>
-        current
-          ? {
-              ...current,
-              locations: current.locations.filter((entry) => entry.id !== location.id),
-              items: current.items.map((item) =>
-                item.location_id === location.id ? { ...item, location_id: null } : item,
-              ),
-            }
-          : current,
-      );
+      await loadCollectionBoard();
       showToast({ tone: "success", text: `Le lieu ${location.name} a ete supprime.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
@@ -796,12 +792,8 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
 
         <div className="top-nav-actions" aria-label="Actions rapides">
           <div
+            ref={quickCatalogMenuRef}
             className="top-search-menu"
-            onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget)) {
-                setIsQuickCatalogSearchOpen(false);
-              }
-            }}
           >
             <label className="top-search">
               <SearchIcon />
@@ -1342,7 +1334,7 @@ function CollectionGamesSection(props: {
               </div>
               <p className="collection-card-copy">Lieu : {item.location_id ? locationNames.get(item.location_id) ?? "Lieu inconnu" : "Sans lieu"}</p>
               <button type="button" className="secondary-button compact-button" onClick={() => onRemoveGame(item)}>
-                Retirer de ma collection
+                Retirer
               </button>
             </article>
           ))}
