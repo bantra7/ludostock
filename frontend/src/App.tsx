@@ -32,12 +32,12 @@ const ADMIN_EMAIL = "renault.jbapt@gmail.com";
 const GAME_SORT_OPTIONS = [
   { value: "name:asc", label: "Nom (A-Z)", sortBy: "name", sortDir: "asc" },
   { value: "name:desc", label: "Nom (Z-A)", sortBy: "name", sortDir: "desc" },
-  { value: "creation_year:asc", label: "Annee (croissante)", sortBy: "creation_year", sortDir: "asc" },
-  { value: "creation_year:desc", label: "Annee (decroissante)", sortBy: "creation_year", sortDir: "desc" },
+  { value: "creation_year:asc", label: "Année (croissante)", sortBy: "creation_year", sortDir: "asc" },
+  { value: "creation_year:desc", label: "Année (décroissante)", sortBy: "creation_year", sortDir: "desc" },
   { value: "players:asc", label: "Joueurs (croissant)", sortBy: "players", sortDir: "asc" },
   { value: "players:desc", label: "Joueurs (decroissant)", sortBy: "players", sortDir: "desc" },
-  { value: "duration_minutes:asc", label: "Duree (croissante)", sortBy: "duration_minutes", sortDir: "asc" },
-  { value: "duration_minutes:desc", label: "Duree (decroissante)", sortBy: "duration_minutes", sortDir: "desc" },
+  { value: "duration_minutes:asc", label: "Durée (croissante)", sortBy: "duration_minutes", sortDir: "asc" },
+  { value: "duration_minutes:desc", label: "Durée (décroissante)", sortBy: "duration_minutes", sortDir: "desc" },
 ] as const;
 
 type GameSortValue = (typeof GAME_SORT_OPTIONS)[number]["value"];
@@ -211,7 +211,7 @@ function App() {
     const { error: signOutError } = await authClient.signOut();
 
     if (signOutError) {
-      setAuthMessage({ tone: "error", text: signOutError.message ?? "Deconnexion impossible." });
+      setAuthMessage({ tone: "error", text: signOutError.message ?? "Déconnexion impossible." });
       return;
     }
 
@@ -226,10 +226,10 @@ function App() {
     return (
       <AuthenticationShell
         actionLabel="Recharger l'application"
-        description="La verification de session prend plus de temps que prevu. Le proxy /api/auth ou le service d'authentification ne repond peut-etre pas encore."
+        description="La vérification de session prend plus de temps que prévu. Le proxy /api/auth ou le service d'authentification ne répond peut-être pas encore."
         message={{
           tone: "error",
-          text: "Si vous utilisez Docker Compose, verifiez que les services frontend et auth sont bien demarres, puis rechargez la page.",
+          text: "Si vous utilisez Docker Compose, vérifiez que les services frontend et auth sont bien démarrés, puis rechargez la page.",
         }}
         onAction={reloadApplication}
         title="Authentification en attente"
@@ -240,7 +240,7 @@ function App() {
   if (isPending) {
     return (
       <AuthenticationShell
-        description="Verification de votre session en cours."
+        description="Vérification de votre session en cours."
         message={authMessage}
         title="Connexion en cours"
       />
@@ -251,7 +251,7 @@ function App() {
     return (
       <AuthenticationShell
         actionLabel="Continuer avec Google"
-        description="Le service d'authentification ne repond pas correctement pour le moment."
+        description="Le service d'authentification ne répond pas correctement pour le moment."
         message={{ tone: "error", text: getErrorMessage(error) }}
         onAction={() => void signInWithGoogle()}
         title="Authentification indisponible"
@@ -342,16 +342,16 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
     { key: "games", label: "Ma collection" },
     { key: "friends", label: "Mes amis" },
     { key: "catalog", label: "Catalogue" },
-    { key: "settings", label: "Parametres" },
+    { key: "settings", label: "Paramètres" },
   ];
   const activeNavItem = visibleNavItems.find((item) => item.key === activeNav) ?? visibleNavItems[0];
   const sectionDescriptions: Record<NavKey, string> = {
-    home: "Votre ludotheque en un coup d'oeil.",
-    catalog: "Parcourez les references et ajoutez des jeux.",
-    friends: "Consultez les collections partagees avec vous.",
-    games: "Consultez les jeux que vous possedez.",
+    home: "Votre ludothèque en un coup d'oeil.",
+    catalog: "Parcourez les références et ajoutez des jeux.",
+    friends: "Consultez les collections partagées avec vous.",
+    games: "Consultez les jeux que vous possédez.",
     locations: "",
-    settings: "Profil et referentiels.",
+    settings: "Profil et référentiels.",
   };
 
   useEffect(() => {
@@ -551,7 +551,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
 
     const shareUrl = buildShareUrl(settings?.share_token ?? null);
     if (!shareUrl) {
-      showToast({ tone: "error", text: "Impossible de generer le lien de partage." });
+      showToast({ tone: "error", text: "Impossible de générer le lien de partage." });
       return;
     }
 
@@ -564,7 +564,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       await navigator.clipboard.writeText(shareUrl);
       showToast({ tone: "success", text: "Lien de partage copie dans le presse-papiers." });
     } catch {
-      showToast({ tone: "error", text: "La copie automatique du lien a echoue." });
+      showToast({ tone: "error", text: "La copie automatique du lien a échoué." });
     }
   }
 
@@ -614,7 +614,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       });
       await loadSharedCollections(joined.collection_id);
       setActiveNav("friends");
-      showToast({ tone: "success", text: `${joined.name} a ete ajoutee a l'onglet Mes amis.` });
+      showToast({ tone: "success", text: `${joined.name} a été ajoutée à l'onglet Mes amis.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
     } finally {
@@ -626,9 +626,9 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
 
   function revokeCollectionSubscriber(shareId: number, label: string) {
     setConfirmDialog({
-      title: `Retirer l'acces de ${label} ?`,
+      title: `Retirer l'accès de ${label} ?`,
       body: "Cette personne ne verra plus votre collection dans son onglet Mes amis.",
-      confirmLabel: "Retirer l'acces",
+      confirmLabel: "Retirer l'accès",
       isDanger: true,
       onConfirm: () => void confirmRevokeCollectionSubscriber(shareId, label),
     });
@@ -638,7 +638,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
     try {
       await request(`/me/collection/share/subscribers/${shareId}`, { method: "DELETE" });
       await loadShareSettings();
-      showToast({ tone: "success", text: `L'acces de ${label} a ete retire.` });
+      showToast({ tone: "success", text: `L'accès de ${label} a été retiré.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
     }
@@ -647,9 +647,9 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   function unsubscribeFromSharedCollection(collection: SharedCollectionSummary) {
     const ownerName = collection.owner?.username || collection.owner?.email || "cette collection";
     setConfirmDialog({
-      title: `Se desabonner de ${collection.name} ?`,
-      body: `La collection de ${ownerName} disparaitra de l'onglet Mes amis jusqu'a une nouvelle invitation.`,
-      confirmLabel: "Se desabonner",
+      title: `Se désabonner de ${collection.name} ?`,
+      body: `La collection de ${ownerName} disparaîtra de l'onglet Mes amis jusqu'à une nouvelle invitation.`,
+      confirmLabel: "Se désabonner",
       isDanger: true,
       onConfirm: () => void confirmUnsubscribeFromSharedCollection(collection),
     });
@@ -661,7 +661,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       await loadSharedCollections(
         activeSharedCollectionId === collection.collection_id ? null : activeSharedCollectionId,
       );
-      showToast({ tone: "success", text: `Vous etes desabonne de ${collection.name}.` });
+      showToast({ tone: "success", text: `Vous êtes désabonné de ${collection.name}.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
     }
@@ -670,7 +670,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   async function createReference(kind: ReferenceKey, event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!isReferenceAdmin) {
-      showToast({ tone: "error", text: "Seul l'administrateur peut modifier les referentiels." });
+      showToast({ tone: "error", text: "Seul l'administrateur peut modifier les référentiels." });
       return;
     }
 
@@ -689,7 +689,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       if (referenceLoaded[kind]) {
         await loadReferencePage(kind, referencePages[kind]);
       }
-      showToast({ tone: "success", text: `${referenceTitles[kind].slice(0, -1)} cree avec succes.` });
+      showToast({ tone: "success", text: `${referenceTitles[kind].slice(0, -1)} créé avec succès.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
     }
@@ -697,7 +697,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
 
   async function deleteReference(kind: ReferenceKey, id: number) {
     if (!isReferenceAdmin) {
-      showToast({ tone: "error", text: "Seul l'administrateur peut modifier les referentiels." });
+      showToast({ tone: "error", text: "Seul l'administrateur peut modifier les référentiels." });
       return;
     }
 
@@ -708,7 +708,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
 
     setConfirmDialog({
       title: `Supprimer ${item.name} ?`,
-      body: `Cette entree sera retiree du referentiel ${referenceTitles[kind].toLowerCase()} et des jeux qui l'utilisent.`,
+      body: `Cette entrée sera retirée du référentiel ${referenceTitles[kind].toLowerCase()} et des jeux qui l'utilisent.`,
       confirmLabel: "Supprimer",
       isDanger: true,
       onConfirm: () => void confirmDeleteReference(kind, id, item.name),
@@ -717,7 +717,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
 
   async function renameReference(kind: ReferenceKey, id: number, name: string) {
     if (!isReferenceAdmin) {
-      showToast({ tone: "error", text: "Seul l'administrateur peut modifier les referentiels." });
+      showToast({ tone: "error", text: "Seul l'administrateur peut modifier les référentiels." });
       return;
     }
 
@@ -736,7 +736,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
           [kind]: game[kind].map((entry) => (entry.id === id ? renamed : entry)),
         })),
       );
-      showToast({ tone: "success", text: `${renamed.name} a ete enregistre.` });
+      showToast({ tone: "success", text: `${renamed.name} a été enregistré.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
     }
@@ -774,7 +774,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       const nextPage =
         references[kind].length === 1 && referencePages[kind] > 1 ? referencePages[kind] - 1 : referencePages[kind];
       await loadReferencePage(kind, nextPage);
-      showToast({ tone: "success", text: `${name} a ete supprime.` });
+      showToast({ tone: "success", text: `${name} a été supprimé.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
     }
@@ -787,7 +787,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       if (hasLoadedCollectionOnce) {
         await loadCollectionBoard();
       }
-      showToast({ tone: "success", text: `${name} a ete supprime.` });
+      showToast({ tone: "success", text: `${name} a été supprimé.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
     }
@@ -807,7 +807,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
         body: JSON.stringify({ location_id: locationId }),
       });
       await loadCollectionBoard();
-      showToast({ tone: "success", text: `Jeu deplace vers ${targetLocation?.name ?? "Sans lieu"}.` });
+      showToast({ tone: "success", text: `Jeu déplacé vers ${targetLocation?.name ?? "Sans lieu"}.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
     }
@@ -826,7 +826,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       if (activeNav === "games" || activeNav === "locations" || hasLoadedCollectionOnce) {
         await loadCollectionBoard();
       }
-      showToast({ tone: "success", text: `${toastGameName} a ete ajoute a votre collection.` });
+      showToast({ tone: "success", text: `${toastGameName} a été ajouté à votre collection.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
     } finally {
@@ -844,7 +844,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   function removeGameFromCollection(collectionItem: CollectionItem) {
     setConfirmDialog({
       title: `Retirer ${collectionItem.game.name} ?`,
-      body: "Le jeu sera retire de votre collection personnelle. Il restera disponible dans le Catalogue.",
+      body: "Le jeu sera retiré de votre collection personnelle. Il restera disponible dans le Catalogue.",
       confirmLabel: "Retirer",
       isDanger: true,
       onConfirm: () => void confirmRemoveGameFromCollection(collectionItem),
@@ -855,7 +855,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
     try {
       await request(`/me/collection/games/${collectionItem.id}`, { method: "DELETE" });
       await loadCollectionBoard();
-      showToast({ tone: "success", text: `${collectionItem.game.name} a ete retire de votre collection.` });
+      showToast({ tone: "success", text: `${collectionItem.game.name} a été retiré de votre collection.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
     }
@@ -877,7 +877,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
       });
       setLocationDraft("");
       await loadCollectionBoard();
-      showToast({ tone: "success", text: `Le lieu ${name} a ete cree.` });
+      showToast({ tone: "success", text: `Le lieu ${name} a été créé.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
     } finally {
@@ -903,7 +903,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
         body: JSON.stringify({ name }),
       });
       await loadCollectionBoard();
-      showToast({ tone: "success", text: `Le lieu ${renamed.name} a ete enregistre.` });
+      showToast({ tone: "success", text: `Le lieu ${renamed.name} a été enregistré.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
     }
@@ -912,7 +912,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   function deleteCollectionLocation(location: UserLocation) {
     setConfirmDialog({
       title: `Supprimer ${location.name} ?`,
-      body: "Le lieu sera supprime. Les jeux ranges dedans resteront dans votre collection et passeront dans Sans lieu.",
+      body: "Le lieu sera supprimé. Les jeux rangés dedans resteront dans votre collection et passeront dans Sans lieu.",
       confirmLabel: "Supprimer le lieu",
       isDanger: true,
       onConfirm: () => void confirmDeleteCollectionLocation(location),
@@ -923,7 +923,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
     try {
       await request<UserLocation>(`/me/collection/locations/${location.id}`, { method: "DELETE" });
       await loadCollectionBoard();
-      showToast({ tone: "success", text: `Le lieu ${location.name} a ete supprime.` });
+      showToast({ tone: "success", text: `Le lieu ${location.name} a été supprimé.` });
     } catch (error) {
       showToast({ tone: "error", text: getErrorMessage(error) });
     }
@@ -1013,7 +1013,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
             <label className="top-search">
               <SearchIcon />
               <input
-                aria-label="Rechercher un jeu a ajouter"
+                aria-label="Rechercher un jeu à ajouter"
                 value={quickCatalogSearch}
                 onChange={(event) => {
                   setQuickCatalogSearch(event.target.value);
@@ -1025,11 +1025,11 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
             </label>
 
             {isQuickCatalogSearchOpen && quickCatalogSearch.trim().length >= 2 ? (
-              <section className="quick-catalog-panel" aria-label="Resultats du catalogue">
+              <section className="quick-catalog-panel" aria-label="Résultats du catalogue">
                 {isQuickCatalogLoading ? (
                   <p className="quick-catalog-message">Recherche...</p>
                 ) : quickCatalogResults.length === 0 ? (
-                  <p className="quick-catalog-message">Aucun jeu trouve.</p>
+                  <p className="quick-catalog-message">Aucun jeu trouvé.</p>
                 ) : (
                   <div className="quick-catalog-list">
                     {quickCatalogResults.map((game) => {
@@ -1047,10 +1047,10 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
                           </div>
                           <div className="quick-catalog-copy">
                             <strong>{game.name}</strong>
-                            <small>{game.creation_year ?? "Annee inconnue"}</small>
+                            <small>{game.creation_year ?? "Année inconnue"}</small>
                           </div>
                           {isInCollection ? (
-                            <span className="status-pill compact-status-pill">Ajoute</span>
+                            <span className="status-pill compact-status-pill">Ajouté</span>
                           ) : (
                             <button
                               type="button"
@@ -1058,8 +1058,8 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
                               disabled={isPending}
                               onMouseDown={(event) => event.preventDefault()}
                               onClick={() => void addQuickCatalogGameToCollection(game)}
-                              aria-label={`Ajouter ${game.name} a ma collection`}
-                              title="Ajouter a ma collection"
+                              aria-label={`Ajouter ${game.name} à ma collection`}
+                              title="Ajouter à ma collection"
                             >
                               <PlusIcon />
                             </button>
@@ -1093,9 +1093,9 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
         )}
 
         {!hasLoadedOnce ? (
-          <section className="loading-card">
-            <h2>Chargement initial</h2>
-            <p>Recuperation des jeux depuis FastAPI.</p>
+          <section className="loading-card loading-spinner-card" aria-live="polite">
+            <div className="loading-spinner" aria-hidden="true" />
+            <p>Chargement des données...</p>
           </section>
         ) : null}
 
@@ -1278,13 +1278,13 @@ function HomeSection({
   return (
     <section className="home-layout home-dashboard">
       <section className="home-command-center">
-        <div className="home-stat-stack home-stat-stack-simple" aria-label="Synthese de ma collection">
+        <div className="home-stat-stack home-stat-stack-simple" aria-label="Synthèse de ma collection">
           <article className="home-stat-card">
             <span className="stat-icon-box">
               <GamesIcon />
             </span>
             <strong>{hasLoadedCollectionOnce ? collectionTotal : "..."}</strong>
-            <span>Jeux de societe</span>
+            <span>Jeux de société</span>
           </article>
 
           <article className="home-stat-card">
@@ -1300,7 +1300,7 @@ function HomeSection({
               <LocationIcon />
             </span>
             <strong>{hasLoadedCollectionOnce ? unassignedTotal : "..."}</strong>
-            <span>{unassignedTotal > 1 ? "Jeux a ranger" : "Jeu a ranger"}</span>
+            <span>{unassignedTotal > 1 ? "Jeux à ranger" : "Jeu à ranger"}</span>
           </article>
         </div>
       </section>
@@ -1339,7 +1339,7 @@ function HomeSection({
                 <PlusIcon />
               </span>
               <h3>Ajouter votre premier jeu</h3>
-              <p>{catalogTotal} references disponibles</p>
+              <p>{catalogTotal} références disponibles</p>
             </button>
           )}
         </div>
@@ -1361,7 +1361,7 @@ function HomeSection({
                 </span>
                 <span>
                   <strong>{location.name}</strong>
-                  <small>{location.count > 1 ? `${location.count} jeux stockes` : `${location.count} jeu stocke`}</small>
+                  <small>{location.count > 1 ? `${location.count} jeux stockés` : `${location.count} jeu stocké`}</small>
                 </span>
                 <span aria-hidden="true">›</span>
               </button>
@@ -1373,7 +1373,7 @@ function HomeSection({
               </span>
               <span>
                 <strong>Aucun lieu</strong>
-                <small>Creez votre premier ecosysteme de rangement</small>
+                <small>Créez votre premier écosystème de rangement</small>
               </span>
               <span aria-hidden="true">›</span>
             </button>
@@ -1425,8 +1425,8 @@ function LocationsManagerSection(props: {
           type="submit"
           className="primary-button icon-button"
           disabled={isCreatingLocation}
-          aria-label={isCreatingLocation ? "Creation du lieu en cours" : "Ajouter le lieu"}
-          title={isCreatingLocation ? "Creation..." : "Ajouter"}
+          aria-label={isCreatingLocation ? "Création du lieu en cours" : "Ajouter le lieu"}
+          title={isCreatingLocation ? "Création..." : "Ajouter"}
         >
           <PlusIcon />
         </button>
@@ -1435,7 +1435,7 @@ function LocationsManagerSection(props: {
       {!hasLoadedOnce || isCollectionLoading ? (
         <div className="empty-state compact">
           <h3>Chargement</h3>
-          <p>Recuperation de vos lieux.</p>
+          <p>Récupération de vos lieux.</p>
         </div>
       ) : locations.length === 0 ? (
         <div className="empty-state compact">
@@ -1535,11 +1535,11 @@ function CollectionGamesSection(props: {
       {!hasLoadedOnce || isCollectionLoading ? (
         <section className="loading-card">
           <h2>Chargement</h2>
-          <p>Recuperation de votre collection.</p>
+          <p>Récupération de votre collection.</p>
         </section>
       ) : items.length === 0 ? (
         <section className="panel empty-state">
-          <h3>{search.trim() ? "Aucun jeu trouve" : "Aucun jeu dans votre collection"}</h3>
+          <h3>{search.trim() ? "Aucun jeu trouvé" : "Aucun jeu dans votre collection"}</h3>
           <p>{search.trim() ? "Essayez une autre recherche." : "Votre collection est vide."}</p>
           {search.trim() ? (
             <button type="button" className="secondary-button" onClick={onSearchClear}>
@@ -1570,7 +1570,7 @@ function CollectionGamesSection(props: {
               </div>
               <div className="collection-card-facts">
                 <CompactGameFact kind="players" label="Nombre de joueurs" value={formatPlayers(item.game)} />
-                <CompactGameFact kind="duration" label="Duree" value={formatDuration(item.game.duration_minutes)} />
+                <CompactGameFact kind="duration" label="Durée" value={formatDuration(item.game.duration_minutes)} />
               </div>
               <p className="collection-card-copy">Lieu : {item.location_id ? locationNames.get(item.location_id) ?? "Lieu inconnu" : "Sans lieu"}</p>
               <button type="button" className="secondary-button compact-button" onClick={() => onRemoveGame(item)}>
@@ -1862,9 +1862,9 @@ function GamesSection(props: {
         <div className="table-shell">
           <div className="table-head games-table-head">
             <div>Nom</div>
-            <div>Annee</div>
+            <div>Année</div>
             <div>Joueurs</div>
-            <div>Duree</div>
+            <div>Durée</div>
             <div>Collection</div>
           </div>
 
@@ -1894,13 +1894,13 @@ function GamesSection(props: {
                     onHoverStart={() => setHoveredGameId(game.id)}
                   />
                   <div>
-                    <CompactGameFact kind="year" label="Annee de publication" value={String(game.creation_year ?? "-")} />
+                    <CompactGameFact kind="year" label="Année de publication" value={String(game.creation_year ?? "-")} />
                   </div>
                   <div>
                     <CompactGameFact kind="players" label="Nombre de joueurs" value={formatPlayers(game)} />
                   </div>
                   <div>
-                    <CompactGameFact kind="duration" label="Duree" value={formatDuration(game.duration_minutes)} />
+                    <CompactGameFact kind="duration" label="Durée" value={formatDuration(game.duration_minutes)} />
                   </div>
                   <div className="row-actions">
                     {collectionGameIds.has(game.id) ? (
@@ -2032,7 +2032,7 @@ function LocationsSection(props: {
           {!hasLoadedOnce ? (
             <div className="empty-state">
               <h3>Chargement</h3>
-              <p>Recuperation de votre collection en cours.</p>
+              <p>R?cup?ration de votre collection en cours.</p>
             </div>
           ) : isCollectionLoading ? (
             <div className="empty-state">
@@ -2173,7 +2173,7 @@ function CollectionLocationColumn(props: {
                 </div>
                 <div className="collection-card-facts">
                   <CompactGameFact kind="players" label="Nombre de joueurs" value={formatPlayers(item.game)} />
-                  <CompactGameFact kind="duration" label="Duree" value={formatDuration(item.game.duration_minutes)} />
+                  <CompactGameFact kind="duration" label="Dur?e" value={formatDuration(item.game.duration_minutes)} />
                 </div>
                 <label className="move-control">
                   <select
@@ -2234,7 +2234,7 @@ function ProfileSettingsPanel({ onSignOut, user }: { onSignOut: () => void; user
       </div>
 
       <button type="button" className="secondary-button profile-signout" onClick={onSignOut}>
-        Se deconnecter
+        Se déconnecter
       </button>
     </section>
   );
@@ -2273,7 +2273,7 @@ function CollectionSharingSection(props: {
       <div className="sharing-status-row">
         <span className="status-pill">{settings?.share_enabled ? "Lien actif" : "Lien inactif"}</span>
         <span className="sharing-status-copy">
-          {subscriberCount > 1 ? `${subscriberCount} abonnes` : `${subscriberCount} abonne`}
+          {subscriberCount > 1 ? `${subscriberCount} abonnés` : `${subscriberCount} abonné`}
         </span>
       </div>
 
@@ -2292,7 +2292,7 @@ function CollectionSharingSection(props: {
           disabled={isLoading || !settings?.share_token}
           onClick={onRegenerateLink}
         >
-          Regenerer le lien
+          Régénérer le lien
         </button>
         <button
           type="button"
@@ -2308,25 +2308,25 @@ function CollectionSharingSection(props: {
         <span>Lien de partage</span>
         <input
           readOnly
-          value={settings?.share_token ? shareUrl : "Activez le partage pour generer un lien."}
+          value={settings?.share_token ? shareUrl : "Activez le partage pour générer un lien."}
           aria-label="Lien de partage de ma collection"
         />
       </label>
 
       <div className="simple-table">
         <div className="simple-head">
-          <span>Acces autorises</span>
+          <span>Accès autorisés</span>
           <span>Action</span>
         </div>
 
         {isLoading && !settings ? (
           <div className="empty-state compact">
             <h3>Chargement</h3>
-            <p>Recuperation des droits de partage.</p>
+            <p>Récupération des droits de partage.</p>
           </div>
         ) : subscriberCount === 0 ? (
           <div className="empty-state compact">
-            <h3>Aucun abonne</h3>
+            <h3>Aucun abonné</h3>
             <p>Les personnes qui utiliseront votre lien apparaitront ici.</p>
           </div>
         ) : (
@@ -2394,14 +2394,14 @@ function FriendsCollectionsSection(props: {
       <section className="panel friends-sidebar-panel">
         <div className="section-intro compact">
           <p className="eyebrow">Mes amis</p>
-          <h2>Collections partagees</h2>
-          <p>Retrouvez ici les ludotheques auxquelles vous etes abonne.</p>
+          <h2>Collections partagées</h2>
+          <p>Retrouvez ici les ludothèques auxquelles vous êtes abonné.</p>
         </div>
 
         {!hasLoadedOnce && isCollectionsLoading ? (
           <div className="empty-state compact">
             <h3>Chargement</h3>
-            <p>Recuperation de vos collections partagees.</p>
+            <p>Récupération de vos collections partagées.</p>
           </div>
         ) : collections.length === 0 ? (
           <div className="empty-state compact">
@@ -2412,7 +2412,7 @@ function FriendsCollectionsSection(props: {
           <div className="friends-collection-list">
             {collections.map((collection) => {
               const isActive = collection.collection_id === activeCollectionId;
-              const friendLabel = collection.owner?.username || collection.owner?.email || "Collection partagee";
+              const friendLabel = collection.owner?.username || collection.owner?.email || "Collection partagée";
 
               return (
                 <button
@@ -2434,7 +2434,7 @@ function FriendsCollectionsSection(props: {
       <section className="panel friends-board-panel">
         {!activeCollection ? (
           <div className="empty-state">
-            <h3>Selectionnez une collection</h3>
+            <h3>Sélectionnez une collection</h3>
             <p>Choisissez une collection dans la liste pour parcourir son contenu.</p>
           </div>
         ) : (
@@ -2446,14 +2446,14 @@ function FriendsCollectionsSection(props: {
                 <p>{activeCollection.description || "Collection partagee en lecture seule."}</p>
               </div>
               <button type="button" className="secondary-button" onClick={() => onUnsubscribe(activeCollection)}>
-                Se desabonner
+                Se désabonner
               </button>
             </div>
 
             {isBoardLoading ? (
               <div className="empty-state">
                 <h3>Chargement</h3>
-                <p>Recuperation de la collection de {ownerName}.</p>
+                <p>Récupération de la collection de {ownerName}.</p>
               </div>
             ) : !hasGames ? (
               <div className="empty-state">
@@ -2476,7 +2476,7 @@ function FriendsCollectionsSection(props: {
 
                 {items.length === 0 ? (
                   <div className="empty-state">
-                    <h3>Aucun jeu trouve</h3>
+                    <h3>Aucun jeu trouvé</h3>
                     <p>Essayez une autre recherche.</p>
                   </div>
                 ) : (
@@ -2526,9 +2526,9 @@ function SharedCollectionGameCard(props: { item: CollectionItem }) {
         />
       </div>
       <div className="collection-card-facts">
-        <CompactGameFact kind="year" label="Annee de publication" value={String(item.game.creation_year ?? "-")} />
+        <CompactGameFact kind="year" label="Année de publication" value={String(item.game.creation_year ?? "-")} />
         <CompactGameFact kind="players" label="Nombre de joueurs" value={formatPlayers(item.game)} />
-        <CompactGameFact kind="duration" label="Duree" value={formatDuration(item.game.duration_minutes)} />
+        <CompactGameFact kind="duration" label="Durée" value={formatDuration(item.game.duration_minutes)} />
       </div>
     </article>
   );
@@ -2766,16 +2766,16 @@ function GameHoverCard({
 }) {
   const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null);
   const hoverFacts = [
-    { kind: "year" as const, label: "Annee de publication", value: String(game.creation_year ?? "-") },
+    { kind: "year" as const, label: "Année de publication", value: String(game.creation_year ?? "-") },
     { kind: "players" as const, label: "Nombre de joueurs", value: formatPlayers(game) },
-    { kind: "duration" as const, label: "Duree", value: formatDuration(game.duration_minutes) },
+    { kind: "duration" as const, label: "Durée", value: formatDuration(game.duration_minutes) },
   ];
   const details = [
     { label: "Type", value: game.type || "-" },
     { label: "Age minimum", value: game.min_age !== null ? `${game.min_age}+` : "-" },
     { label: "Auteurs", value: joinNames(game.authors) },
     { label: "Artistes", value: joinNames(game.artists) },
-    { label: "Editeurs", value: joinNames(game.editors) },
+    { label: "Éditeurs", value: joinNames(game.editors) },
     { label: "Distributeurs", value: joinNames(game.distributors) },
   ];
 
@@ -2898,7 +2898,7 @@ function EntitiesSection(props: {
   return (
     <section className="entities-layout">
       <section className="section-intro">
-        <h2>Referentiels</h2>
+        <h2>Référentiels</h2>
       </section>
 
       <div className="entity-accordion">
@@ -2945,11 +2945,11 @@ function EntitiesSection(props: {
                     {isLoading && !hasLoaded ? (
                       <div className="empty-state compact">
                         <h3>Chargement</h3>
-                        <p>Recuperation de la page {currentPage}.</p>
+                        <p>Récupération de la page {currentPage}.</p>
                       </div>
                     ) : references[kind].length === 0 ? (
                       <div className="empty-state compact">
-                        <h3>Referentiel vide</h3>
+                        <h3>Référentiel vide</h3>
                         <p>Aucun element n'est disponible pour cette categorie.</p>
                       </div>
                     ) : (
@@ -2988,7 +2988,7 @@ function EntitiesSection(props: {
                       disabled={!canGoBack || isLoading}
                       onClick={() => onReferencePageChange(kind, currentPage - 1)}
                     >
-                      Page precedente
+                      Page précédente
                     </button>
                     <span>Page {currentPage}</span>
                     <button
@@ -3035,7 +3035,7 @@ function formatPlayers(game: Game) {
     return `${game.min_players}+`;
   }
   if (game.max_players !== null) {
-    return `jusqu'a ${game.max_players}`;
+    return `jusqu'à ${game.max_players}`;
   }
   return "-";
 }

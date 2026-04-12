@@ -128,7 +128,7 @@ export const navItems: { key: NavKey; label: string }[] = [
   { key: "games", label: "Ma collection" },
   { key: "friends", label: "Mes amis" },
   { key: "locations", label: "Lieux" },
-  { key: "settings", label: "Parametres" },
+  { key: "settings", label: "Paramètres" },
 ];
 
 export const referenceNavItems: ReferenceKey[] = ["authors", "artists", "editors", "distributors"];
@@ -136,7 +136,7 @@ export const referenceNavItems: ReferenceKey[] = ["authors", "artists", "editors
 export const referenceTitles: Record<ReferenceKey, string> = {
   authors: "Auteurs",
   artists: "Artistes",
-  editors: "Editeurs",
+  editors: "Éditeurs",
   distributors: "Distributeurs",
 };
 

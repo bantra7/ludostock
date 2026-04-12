@@ -1,18 +1,18 @@
 # Ludostock
 
-Projet d'application de gestion d'une collection de jeux de societe.
+Projet d'application de gestion d'une collection de jeux de société.
 
 ## Backend
 
-L'application backend est developpee en FastAPI. Elle fournit l'API pour gerer les donnees de la collection de jeux.
+L'application backend est développée en FastAPI. Elle fournit l'API pour gérer les données de la collection de jeux.
 
 ## Authentification
 
-L'authentification est assuree par un service Better Auth dedie, configure en connexion Google uniquement. Le frontend consomme `/api/auth/*` via proxy et le backend FastAPI valide la session courante aupres de ce service avant d'autoriser les routes metier.
+L'authentification est assurée par un service Better Auth dédié, configuré en connexion Google uniquement. Le frontend consomme `/api/auth/*` via proxy et le backend FastAPI valide la session courante auprès de ce service avant d'autoriser les routes métier.
 
 ## Frontend
 
-L'application frontend est developpee en React. Elle offre une interface utilisateur pour interagir avec la collection de jeux.
+L'application frontend est développée en React. Elle offre une interface utilisateur pour interagir avec la collection de jeux.
 
 ## Running with Docker Compose
 

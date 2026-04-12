@@ -1,3 +1,8 @@
+### 1.5.1 (2026-04-12)
+
+* Correction des accents et des libelles francais dans l'interface React.
+* Mise a jour de la documentation utilisateur pour harmoniser les textes visibles.
+
 ### 1.5.0 (2026-04-12)
 
 * Ajout du partage de collection via lien d'invitation activable depuis `Parametres`, avec copie du lien, regeneration et desactivation.
