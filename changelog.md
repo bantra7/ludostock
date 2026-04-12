@@ -1,3 +1,14 @@
+### 1.5.0 (2026-04-12)
+
+* Ajout du partage de collection via lien d'invitation activable depuis `Parametres`, avec copie du lien, regeneration et desactivation.
+* Ajout de l'onglet `Mes amis` pour lister les collections partagees avec l'utilisateur et consulter leur rangement en lecture seule.
+* Ajout de l'administration des droits de vue de la collection personnelle, avec liste des abonnes et retrait d'acces individuel.
+* Ajout du desabonnement a une collection partagee depuis l'onglet `Mes amis`.
+* Extension du backend FastAPI/SQLite et des tests pour couvrir le jeton de partage, l'abonnement, la revocation et l'acces aux collections amies.
+* Correction du comportement de la collection personnelle sur Cloud Run en remplaçant le simple seeding SQLite depuis GCS par une vraie synchronisation du snapshot SQLite avec Google Cloud Storage.
+* Ajout de logs backend cibles pour diagnostiquer les ajouts en collection, le chargement du board personnel, le contexte d'instance Cloud Run et les problemes de session.
+* Mise a jour du deploiement et de la documentation pour utiliser `SQLITE_GCS_BUCKET` et `SQLITE_GCS_OBJECT`, avec droits d'ecriture GCS pour le backend.
+
 ### 1.4.2 (2026-04-11)
 
 * Correction de la recherche rapide en barre superieure pour que le bouton `+` declenche bien l'ajout en collection sans fermer le panneau trop tot.

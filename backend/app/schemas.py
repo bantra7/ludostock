@@ -221,6 +221,34 @@ class CollectionShare(CollectionShareBase):
     shared_with: UUID
 
 
+class CollectionSubscriber(CollectionShare):
+    """Subscriber granted access to a shared collection."""
+
+    user: Optional[User] = None
+
+
+class CollectionShareSettingsUpdate(OrmSchema):
+    """Payload used to toggle or regenerate the personal collection share link."""
+
+    share_enabled: Optional[bool] = None
+    regenerate_link: bool = False
+
+
+class CollectionShareSettings(OrmSchema):
+    """Share settings for the authenticated user's collection."""
+
+    collection_id: int
+    share_enabled: bool
+    share_token: Optional[str] = None
+    subscribers: List[CollectionSubscriber] = Field(default_factory=list)
+
+
+class CollectionShareJoinCreate(OrmSchema):
+    """Payload used to join a shared collection through its invite link."""
+
+    share_token: str
+
+
 class CollectionBase(OrmSchema):
     """Shared collection fields."""
 
@@ -239,6 +267,8 @@ class Collection(CollectionBase):
 
     id: int
     owner_id: UUID
+    share_token: Optional[str] = None
+    share_enabled: bool = False
     owner: Optional[User] = None
     games: List[CollectionGame] = Field(default_factory=list)
     shares: List[CollectionShare] = Field(default_factory=list)
@@ -275,5 +305,30 @@ class PersonalCollectionBoard(OrmSchema):
     """Authenticated user's collection grouped by locations."""
 
     collection_id: int
+    locations: List[UserLocation] = Field(default_factory=list)
+    items: List[PersonalCollectionItem] = Field(default_factory=list)
+
+
+class SharedCollectionSummary(OrmSchema):
+    """A collection the authenticated user can view through a share."""
+
+    collection_id: int
+    share_id: int
+    permission: str
+    name: str
+    description: Optional[str] = None
+    owner: Optional[User] = None
+    game_count: int = 0
+
+
+class SharedCollectionBoard(OrmSchema):
+    """Read-only board for a shared collection owned by another user."""
+
+    collection_id: int
+    share_id: int
+    permission: str
+    name: str
+    description: Optional[str] = None
+    owner: Optional[User] = None
     locations: List[UserLocation] = Field(default_factory=list)
     items: List[PersonalCollectionItem] = Field(default_factory=list)

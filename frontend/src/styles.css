@@ -823,6 +823,7 @@ a {
 }
 
 .entities-layout,
+.friends-layout,
 .games-catalog-reference,
 .games-main,
 .home-layout,
@@ -866,6 +867,89 @@ a {
 .profile-settings-panel {
   align-items: center;
   justify-content: space-between;
+}
+
+.sharing-settings-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.sharing-status-row,
+.sharing-actions-row,
+.friends-board-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.sharing-status-copy {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.sharing-link-field input {
+  font-size: 0.92rem;
+}
+
+.friends-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.friends-sidebar-panel,
+.friends-board-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.friends-search-panel {
+  padding-block: 1rem;
+}
+
+.friends-collection-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.friends-collection-card {
+  display: grid;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-align: left;
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.friends-collection-card strong,
+.friends-collection-card small {
+  overflow-wrap: anywhere;
+}
+
+.friends-collection-card small,
+.simple-row-name small {
+  color: var(--muted);
+}
+
+.friends-collection-card-active {
+  border-color: rgba(69, 153, 100, 0.45);
+  background: rgba(216, 248, 227, 0.95);
+  box-shadow: 0 16px 34px rgba(69, 153, 100, 0.12);
+}
+
+.simple-row-name {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.collection-card-readonly {
+  cursor: default;
 }
 
 .home-command-center {
@@ -2065,6 +2149,10 @@ a {
     grid-template-columns: 1fr;
   }
 
+  .friends-layout {
+    grid-template-columns: 1fr;
+  }
+
   .home-stat-stack {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2193,6 +2281,12 @@ a {
   .entity-form,
   .form-actions {
     align-items: stretch;
+  }
+
+  .sharing-actions-row,
+  .friends-board-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .field,
@@ -2408,6 +2502,11 @@ a {
   .row-actions,
   .form-actions,
   .entity-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sharing-status-row {
     align-items: stretch;
     flex-direction: column;
   }

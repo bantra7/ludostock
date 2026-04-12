@@ -12,6 +12,10 @@ def test_app_registers_game_routes():
     assert "/api/collections/" in paths
     assert "/api/me/collection/games/" in paths
     assert "/api/me/collection/board/" in paths
+    assert "/api/me/collection/share/" in paths
+    assert "/api/me/collection/share/join/" in paths
+    assert "/api/me/friends/collections/" in paths
+    assert "/api/me/friends/collections/{collection_id}/board/" in paths
     assert "/api/authors/{author_id}" in paths
 
 
@@ -84,6 +88,8 @@ def test_admin_guard_allows_personal_collection_and_catalog_reads():
     assert not auth.requires_admin_access("/api/me/collection/locations/", "POST")
     assert not auth.requires_admin_access("/api/me/collection/locations/4", "PATCH")
     assert not auth.requires_admin_access("/api/me/collection/locations/4", "DELETE")
+    assert not auth.requires_admin_access("/api/me/collection/share/", "PATCH")
+    assert not auth.requires_admin_access("/api/me/friends/collections/1/subscription/", "DELETE")
     assert not auth.requires_admin_access("/api/games/", "GET")
     assert not auth.requires_admin_access("/api/authors/1", "GET")
 
@@ -167,6 +173,132 @@ def test_get_my_collection_board_delegates_to_crud(monkeypatch):
     response = main.get_my_collection_board(request=request)
 
     assert response["collection_id"] == 1
+
+
+def test_get_my_collection_share_settings_delegates_to_crud(monkeypatch):
+    request = SimpleNamespace(state=SimpleNamespace(user={"name": "Alice", "email": "alice@example.com"}))
+
+    def fake_get_personal_collection_share_settings(**kwargs):
+        assert kwargs == {"auth_user": {"name": "Alice", "email": "alice@example.com"}}
+        return {"collection_id": 1, "share_enabled": False, "share_token": None, "subscribers": []}
+
+    monkeypatch.setattr(main.crud, "get_personal_collection_share_settings", fake_get_personal_collection_share_settings)
+
+    response = main.get_my_collection_share_settings(request=request)
+
+    assert response["collection_id"] == 1
+
+
+def test_update_my_collection_share_settings_delegates_to_crud(monkeypatch):
+    captured = {}
+    request = SimpleNamespace(state=SimpleNamespace(user={"name": "Alice", "email": "alice@example.com"}))
+
+    def fake_update_personal_collection_share_settings(**kwargs):
+        captured.update(kwargs)
+        return {"collection_id": 1, "share_enabled": True, "share_token": "token", "subscribers": []}
+
+    monkeypatch.setattr(main.crud, "update_personal_collection_share_settings", fake_update_personal_collection_share_settings)
+
+    response = main.update_my_collection_share_settings(
+        request=request,
+        payload=main.schemas.CollectionShareSettingsUpdate(share_enabled=True, regenerate_link=True),
+    )
+
+    assert response["share_enabled"] is True
+    assert captured == {
+        "auth_user": {"name": "Alice", "email": "alice@example.com"},
+        "share_enabled": True,
+        "regenerate_link": True,
+    }
+
+
+def test_join_collection_share_delegates_to_crud(monkeypatch):
+    captured = {}
+    request = SimpleNamespace(state=SimpleNamespace(user={"name": "Alice", "email": "alice@example.com"}))
+
+    def fake_join_shared_collection(**kwargs):
+        captured.update(kwargs)
+        return {
+            "collection_id": 9,
+            "share_id": 4,
+            "permission": "viewer",
+            "name": "Collection de Bob",
+            "description": None,
+            "owner": {"id": "abc", "email": "bob@example.com", "username": "Bob"},
+            "game_count": 12,
+        }
+
+    monkeypatch.setattr(main.crud, "join_shared_collection", fake_join_shared_collection)
+
+    response = main.join_collection_share(
+        request=request,
+        payload=main.schemas.CollectionShareJoinCreate(share_token="share-token"),
+    )
+
+    assert response["collection_id"] == 9
+    assert captured == {
+        "auth_user": {"name": "Alice", "email": "alice@example.com"},
+        "share_token": "share-token",
+    }
+
+
+def test_get_my_friend_collections_delegates_to_crud(monkeypatch):
+    request = SimpleNamespace(state=SimpleNamespace(user={"name": "Alice", "email": "alice@example.com"}))
+
+    def fake_get_shared_collections(**kwargs):
+        assert kwargs == {"auth_user": {"name": "Alice", "email": "alice@example.com"}}
+        return []
+
+    monkeypatch.setattr(main.crud, "get_shared_collections", fake_get_shared_collections)
+
+    assert main.get_my_friend_collections(request=request) == []
+
+
+def test_get_my_friend_collection_board_delegates_to_crud(monkeypatch):
+    captured = {}
+    request = SimpleNamespace(state=SimpleNamespace(user={"name": "Alice", "email": "alice@example.com"}))
+
+    def fake_get_shared_collection_board(**kwargs):
+        captured.update(kwargs)
+        return {
+            "collection_id": kwargs["collection_id"],
+            "share_id": 4,
+            "permission": "viewer",
+            "name": "Collection de Bob",
+            "description": None,
+            "owner": {"id": "abc", "email": "bob@example.com", "username": "Bob"},
+            "locations": [],
+            "items": [],
+        }
+
+    monkeypatch.setattr(main.crud, "get_shared_collection_board", fake_get_shared_collection_board)
+
+    response = main.get_my_friend_collection_board(request=request, collection_id=9)
+
+    assert response["collection_id"] == 9
+    assert captured == {
+        "auth_user": {"name": "Alice", "email": "alice@example.com"},
+        "collection_id": 9,
+    }
+
+
+def test_unsubscribe_from_friend_collection_delegates_to_crud(monkeypatch):
+    captured = {}
+    request = SimpleNamespace(state=SimpleNamespace(user={"name": "Alice", "email": "alice@example.com"}))
+
+    def fake_unsubscribe_from_shared_collection(**kwargs):
+        captured.update(kwargs)
+        return {"id": 2, "collection_id": kwargs["collection_id"], "shared_with": "abc", "permission": "viewer"}
+
+    monkeypatch.setattr(main.crud, "unsubscribe_from_shared_collection", fake_unsubscribe_from_shared_collection)
+
+    response = main.unsubscribe_from_friend_collection(request=request, collection_id=11)
+
+    assert response["collection_id"] == 11
+    assert captured == {
+        "auth_user": {"name": "Alice", "email": "alice@example.com"},
+        "collection_id": 11,
+    }
 
 
 def test_move_game_in_my_collection_delegates_to_crud(monkeypatch):

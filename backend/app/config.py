@@ -23,6 +23,8 @@ class Settings(BaseSettings):
 
     environment: str = "local"
     sqlite_path: str = "backend/app/ludostock.db"
+    sqlite_gcs_bucket: str = ""
+    sqlite_gcs_object: str = ""
     allow_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
     auth_service_url: str = "http://localhost:3001"
     auth_internal_secret: str = ""
@@ -51,6 +53,8 @@ settings = Settings()
 
 ENVIRONMENT = settings.environment
 SQLITE_PATH = settings.sqlite_path
+SQLITE_GCS_BUCKET = settings.sqlite_gcs_bucket
+SQLITE_GCS_OBJECT = settings.sqlite_gcs_object
 ALLOW_ORIGINS = settings.allow_origins
 AUTH_SERVICE_URL = settings.auth_service_url
 AUTH_INTERNAL_SECRET = settings.auth_internal_secret

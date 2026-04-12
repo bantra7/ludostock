@@ -7,6 +7,8 @@ Ce backend FastAPI utilise SQLite en local et s'appuie sur un service Better Aut
 Les variables utiles sont :
 
 - `SQLITE_PATH` : chemin du fichier SQLite
+- `SQLITE_GCS_BUCKET` : bucket GCS utilise pour synchroniser le snapshot SQLite
+- `SQLITE_GCS_OBJECT` : objet GCS cible du snapshot SQLite
 - `ENV_PATH` : fichier `.env` a charger
 - `ALLOW_ORIGINS` : liste CORS, en CSV ou JSON
 - `AUTH_SERVICE_URL` : URL du service Better Auth
@@ -31,6 +33,7 @@ uvicorn backend.app.main:app --host 0.0.0.0 --port 8081 --reload
 ```
 
 Au demarrage, l'application cree automatiquement le fichier SQLite et ses tables si besoin.
+Si `SQLITE_GCS_BUCKET` et `SQLITE_GCS_OBJECT` sont renseignes, le backend telecharge d'abord le snapshot distant puis republie un snapshot apres chaque commit d'ecriture.
 
 ## Importer un CSV de jeux
 
@@ -53,6 +56,8 @@ Le CSV historique `data/raw/trictac_data.csv` ne contient pas ces colonnes ; si 
 ```text
 ENVIRONMENT=local
 SQLITE_PATH=backend/app/ludostock.db
+SQLITE_GCS_BUCKET=
+SQLITE_GCS_OBJECT=
 ALLOW_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost,http://127.0.0.1
 AUTH_SERVICE_URL=http://localhost:3001
 AUTH_INTERNAL_SECRET=replace-with-your-internal-shared-secret

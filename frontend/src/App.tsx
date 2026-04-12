@@ -7,6 +7,7 @@ import type {
   CollectionBoard,
   CollectionGame,
   CollectionItem,
+  CollectionShareSettings,
   Game,
   GamePage,
   NamedEntity,
@@ -14,6 +15,8 @@ import type {
   ReferenceCollection,
   ReferenceDrafts,
   ReferenceKey,
+  SharedCollectionBoard,
+  SharedCollectionSummary,
   UserLocation,
 } from "./types";
 
@@ -74,6 +77,16 @@ function buildGamePagePath(
   }
 
   return `${basePath}?${params.toString()}`;
+}
+
+function buildShareUrl(shareToken: string | null) {
+  if (!shareToken || typeof window === "undefined") {
+    return "";
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set("share", shareToken);
+  return url.toString();
 }
 
 function createReferenceNumberMap(initialValue: number) {
@@ -186,7 +199,7 @@ function App() {
     setAuthMessage(null);
     const { error: signInError } = await authClient.signIn.social({
       provider: "google",
-      callbackURL: "/",
+      callbackURL: `${window.location.pathname}${window.location.search}`,
     });
 
     if (signInError) {
@@ -303,6 +316,15 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   const [isCollectionLoading, setIsCollectionLoading] = useState(false);
   const [hasLoadedCollectionOnce, setHasLoadedCollectionOnce] = useState(false);
   const [collectionSearch, setCollectionSearch] = useState("");
+  const [shareSettings, setShareSettings] = useState<CollectionShareSettings | null>(null);
+  const [isShareSettingsLoading, setIsShareSettingsLoading] = useState(false);
+  const [sharedCollections, setSharedCollections] = useState<SharedCollectionSummary[]>([]);
+  const [isSharedCollectionsLoading, setIsSharedCollectionsLoading] = useState(false);
+  const [hasLoadedSharedCollectionsOnce, setHasLoadedSharedCollectionsOnce] = useState(false);
+  const [activeSharedCollectionId, setActiveSharedCollectionId] = useState<number | null>(null);
+  const [sharedCollectionBoard, setSharedCollectionBoard] = useState<SharedCollectionBoard | null>(null);
+  const [isSharedCollectionBoardLoading, setIsSharedCollectionBoardLoading] = useState(false);
+  const hasProcessedShareLinkRef = useRef(false);
   const [quickCatalogSearch, setQuickCatalogSearch] = useState("");
   const [quickCatalogResults, setQuickCatalogResults] = useState<Game[]>([]);
   const [isQuickCatalogLoading, setIsQuickCatalogLoading] = useState(false);
@@ -318,6 +340,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   const visibleNavItems: NavigationItem[] = [
     { key: "home", label: "Accueil" },
     { key: "games", label: "Ma collection" },
+    { key: "friends", label: "Mes amis" },
     { key: "catalog", label: "Catalogue" },
     { key: "settings", label: "Parametres" },
   ];
@@ -325,6 +348,7 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   const sectionDescriptions: Record<NavKey, string> = {
     home: "Votre ludotheque en un coup d'oeil.",
     catalog: "Parcourez les references et ajoutez des jeux.",
+    friends: "Consultez les collections partagees avec vous.",
     games: "Consultez les jeux que vous possedez.",
     locations: "",
     settings: "Profil et referentiels.",
@@ -413,6 +437,41 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   }, [activeNav]);
 
   useEffect(() => {
+    if (activeNav === "settings") {
+      void loadShareSettings();
+    }
+  }, [activeNav]);
+
+  useEffect(() => {
+    if (activeNav === "friends") {
+      void loadSharedCollections();
+    }
+  }, [activeNav]);
+
+  useEffect(() => {
+    if (activeNav !== "friends" || activeSharedCollectionId === null) {
+      return;
+    }
+
+    void loadSharedCollectionBoard(activeSharedCollectionId);
+  }, [activeNav, activeSharedCollectionId]);
+
+  useEffect(() => {
+    if (hasProcessedShareLinkRef.current) {
+      return;
+    }
+
+    const shareToken = new URLSearchParams(window.location.search).get("share");
+    if (!shareToken) {
+      hasProcessedShareLinkRef.current = true;
+      return;
+    }
+
+    hasProcessedShareLinkRef.current = true;
+    void joinSharedCollectionFromLink(shareToken);
+  }, []);
+
+  useEffect(() => {
     if (!hasLoadedOnce && !isGamesLoading) {
       setHasLoadedOnce(true);
     }
@@ -452,6 +511,159 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
     } finally {
       setIsCollectionLoading(false);
       setHasLoadedCollectionOnce(true);
+    }
+  }
+
+  async function loadShareSettings() {
+    setIsShareSettingsLoading(true);
+    try {
+      const settings = await request<CollectionShareSettings>("/me/collection/share/");
+      setShareSettings(settings);
+    } catch (error) {
+      showToast({ tone: "error", text: getErrorMessage(error) });
+    } finally {
+      setIsShareSettingsLoading(false);
+    }
+  }
+
+  async function updateShareSettings(payload: { regenerate_link?: boolean; share_enabled?: boolean }) {
+    setIsShareSettingsLoading(true);
+    try {
+      const settings = await request<CollectionShareSettings>("/me/collection/share/", {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      setShareSettings(settings);
+      return settings;
+    } catch (error) {
+      showToast({ tone: "error", text: getErrorMessage(error) });
+      return null;
+    } finally {
+      setIsShareSettingsLoading(false);
+    }
+  }
+
+  async function copyShareLink() {
+    let settings = shareSettings;
+    if (!settings?.share_enabled || !settings.share_token) {
+      settings = await updateShareSettings({ share_enabled: true });
+    }
+
+    const shareUrl = buildShareUrl(settings?.share_token ?? null);
+    if (!shareUrl) {
+      showToast({ tone: "error", text: "Impossible de generer le lien de partage." });
+      return;
+    }
+
+    if (!navigator.clipboard) {
+      showToast({ tone: "error", text: "La copie automatique n'est pas disponible dans ce navigateur." });
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      showToast({ tone: "success", text: "Lien de partage copie dans le presse-papiers." });
+    } catch {
+      showToast({ tone: "error", text: "La copie automatique du lien a echoue." });
+    }
+  }
+
+  async function loadSharedCollections(preferredCollectionId?: number | null) {
+    setIsSharedCollectionsLoading(true);
+    try {
+      const collections = await request<SharedCollectionSummary[]>("/me/friends/collections/");
+      setSharedCollections(collections);
+      setHasLoadedSharedCollectionsOnce(true);
+      setActiveSharedCollectionId((current) => {
+        if (preferredCollectionId && collections.some((collection) => collection.collection_id === preferredCollectionId)) {
+          return preferredCollectionId;
+        }
+        if (current && collections.some((collection) => collection.collection_id === current)) {
+          return current;
+        }
+        return collections[0]?.collection_id ?? null;
+      });
+      if (collections.length === 0) {
+        setSharedCollectionBoard(null);
+      }
+    } catch (error) {
+      showToast({ tone: "error", text: getErrorMessage(error) });
+    } finally {
+      setIsSharedCollectionsLoading(false);
+    }
+  }
+
+  async function loadSharedCollectionBoard(collectionId: number) {
+    setIsSharedCollectionBoardLoading(true);
+    try {
+      const board = await request<SharedCollectionBoard>(`/me/friends/collections/${collectionId}/board/`);
+      setSharedCollectionBoard(board);
+    } catch (error) {
+      setSharedCollectionBoard(null);
+      showToast({ tone: "error", text: getErrorMessage(error) });
+    } finally {
+      setIsSharedCollectionBoardLoading(false);
+    }
+  }
+
+  async function joinSharedCollectionFromLink(shareToken: string) {
+    try {
+      const joined = await request<SharedCollectionSummary>("/me/collection/share/join/", {
+        method: "POST",
+        body: JSON.stringify({ share_token: shareToken }),
+      });
+      await loadSharedCollections(joined.collection_id);
+      setActiveNav("friends");
+      showToast({ tone: "success", text: `${joined.name} a ete ajoutee a l'onglet Mes amis.` });
+    } catch (error) {
+      showToast({ tone: "error", text: getErrorMessage(error) });
+    } finally {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.delete("share");
+      window.history.replaceState({}, "", `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+    }
+  }
+
+  function revokeCollectionSubscriber(shareId: number, label: string) {
+    setConfirmDialog({
+      title: `Retirer l'acces de ${label} ?`,
+      body: "Cette personne ne verra plus votre collection dans son onglet Mes amis.",
+      confirmLabel: "Retirer l'acces",
+      isDanger: true,
+      onConfirm: () => void confirmRevokeCollectionSubscriber(shareId, label),
+    });
+  }
+
+  async function confirmRevokeCollectionSubscriber(shareId: number, label: string) {
+    try {
+      await request(`/me/collection/share/subscribers/${shareId}`, { method: "DELETE" });
+      await loadShareSettings();
+      showToast({ tone: "success", text: `L'acces de ${label} a ete retire.` });
+    } catch (error) {
+      showToast({ tone: "error", text: getErrorMessage(error) });
+    }
+  }
+
+  function unsubscribeFromSharedCollection(collection: SharedCollectionSummary) {
+    const ownerName = collection.owner?.username || collection.owner?.email || "cette collection";
+    setConfirmDialog({
+      title: `Se desabonner de ${collection.name} ?`,
+      body: `La collection de ${ownerName} disparaitra de l'onglet Mes amis jusqu'a une nouvelle invitation.`,
+      confirmLabel: "Se desabonner",
+      isDanger: true,
+      onConfirm: () => void confirmUnsubscribeFromSharedCollection(collection),
+    });
+  }
+
+  async function confirmUnsubscribeFromSharedCollection(collection: SharedCollectionSummary) {
+    try {
+      await request(`/me/friends/collections/${collection.collection_id}/subscription/`, { method: "DELETE" });
+      await loadSharedCollections(
+        activeSharedCollectionId === collection.collection_id ? null : activeSharedCollectionId,
+      );
+      showToast({ tone: "success", text: `Vous etes desabonne de ${collection.name}.` });
+    } catch (error) {
+      showToast({ tone: "error", text: getErrorMessage(error) });
     }
   }
 
@@ -761,6 +973,9 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
   const pageStart = totalGames === 0 ? 0 : (currentPage - 1) * gamePageSize + 1;
   const pageEnd = totalGames === 0 ? 0 : Math.min(currentPage * gamePageSize, totalGames);
   const collectionGameIds = new Set(collectionBoard?.items.map((item) => item.game_id) ?? []);
+  const shareUrl = buildShareUrl(shareSettings?.share_token ?? null);
+  const activeSharedCollection =
+    sharedCollections.find((collection) => collection.collection_id === activeSharedCollectionId) ?? null;
   return (
     <div className="app-shell">
       <aside className="sidebar app-nav-shell">
@@ -931,6 +1146,20 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
           </div>
         ) : null}
 
+        {activeNav === "friends" ? (
+          <FriendsCollectionsSection
+            activeCollection={activeSharedCollection}
+            activeCollectionId={activeSharedCollectionId}
+            board={sharedCollectionBoard}
+            collections={sharedCollections}
+            hasLoadedOnce={hasLoadedSharedCollectionsOnce}
+            isBoardLoading={isSharedCollectionBoardLoading}
+            isCollectionsLoading={isSharedCollectionsLoading}
+            onSelectCollection={setActiveSharedCollectionId}
+            onUnsubscribe={unsubscribeFromSharedCollection}
+          />
+        ) : null}
+
         {activeNav === "catalog" ? (
           <section className="games-catalog-reference" ref={gamesCatalogRef}>
             <section className="section-intro panel">
@@ -968,6 +1197,17 @@ function AuthenticatedApp(props: { authMessage: FlashMessage | null; onSignOut: 
         {activeNav === "settings" ? (
           <section className="settings-layout">
             <ProfileSettingsPanel onSignOut={onSignOut} user={user} />
+
+            <CollectionSharingSection
+              isLoading={isShareSettingsLoading}
+              settings={shareSettings}
+              shareUrl={shareUrl}
+              onCopyLink={() => void copyShareLink()}
+              onDisableShare={() => void updateShareSettings({ share_enabled: false })}
+              onEnableShare={() => void updateShareSettings({ share_enabled: true })}
+              onRegenerateLink={() => void updateShareSettings({ share_enabled: true, regenerate_link: true })}
+              onRevokeSubscriber={revokeCollectionSubscriber}
+            />
 
             {isReferenceAdmin && hasLoadedOnce ? (
               <EntitiesSection
@@ -1997,6 +2237,300 @@ function ProfileSettingsPanel({ onSignOut, user }: { onSignOut: () => void; user
         Se deconnecter
       </button>
     </section>
+  );
+}
+
+function CollectionSharingSection(props: {
+  isLoading: boolean;
+  settings: CollectionShareSettings | null;
+  shareUrl: string;
+  onCopyLink: () => void;
+  onDisableShare: () => void;
+  onEnableShare: () => void;
+  onRegenerateLink: () => void;
+  onRevokeSubscriber: (shareId: number, label: string) => void;
+}) {
+  const {
+    isLoading,
+    settings,
+    shareUrl,
+    onCopyLink,
+    onDisableShare,
+    onEnableShare,
+    onRegenerateLink,
+    onRevokeSubscriber,
+  } = props;
+  const subscriberCount = settings?.subscribers.length ?? 0;
+
+  return (
+    <section className="panel sharing-settings-panel">
+      <div className="section-intro compact">
+        <p className="eyebrow">Partage</p>
+        <h2>Partager ma collection</h2>
+        <p>Activez un lien d'invitation, copiez-le, puis gerez les personnes qui peuvent encore voir votre collection.</p>
+      </div>
+
+      <div className="sharing-status-row">
+        <span className="status-pill">{settings?.share_enabled ? "Lien actif" : "Lien inactif"}</span>
+        <span className="sharing-status-copy">
+          {subscriberCount > 1 ? `${subscriberCount} abonnes` : `${subscriberCount} abonne`}
+        </span>
+      </div>
+
+      <div className="sharing-actions-row">
+        <button
+          type="button"
+          className="primary-button"
+          disabled={isLoading}
+          onClick={settings?.share_enabled ? onCopyLink : onEnableShare}
+        >
+          {settings?.share_enabled ? "Copier le lien" : "Activer le partage"}
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={isLoading || !settings?.share_token}
+          onClick={onRegenerateLink}
+        >
+          Regenerer le lien
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={isLoading || !settings?.share_enabled}
+          onClick={onDisableShare}
+        >
+          Desactiver le lien
+        </button>
+      </div>
+
+      <label className="field sharing-link-field">
+        <span>Lien de partage</span>
+        <input
+          readOnly
+          value={settings?.share_token ? shareUrl : "Activez le partage pour generer un lien."}
+          aria-label="Lien de partage de ma collection"
+        />
+      </label>
+
+      <div className="simple-table">
+        <div className="simple-head">
+          <span>Acces autorises</span>
+          <span>Action</span>
+        </div>
+
+        {isLoading && !settings ? (
+          <div className="empty-state compact">
+            <h3>Chargement</h3>
+            <p>Recuperation des droits de partage.</p>
+          </div>
+        ) : subscriberCount === 0 ? (
+          <div className="empty-state compact">
+            <h3>Aucun abonne</h3>
+            <p>Les personnes qui utiliseront votre lien apparaitront ici.</p>
+          </div>
+        ) : (
+          settings?.subscribers.map((subscriber) => {
+            const label = subscriber.user?.username || subscriber.user?.email || "Utilisateur";
+            return (
+              <div key={subscriber.id} className="simple-row">
+                <span className="simple-row-name">
+                  <strong>{label}</strong>
+                  <small>{subscriber.user?.email || "Adresse indisponible"}</small>
+                </span>
+                <button
+                  type="button"
+                  className="secondary-button compact-button"
+                  onClick={() => onRevokeSubscriber(subscriber.id, label)}
+                >
+                  Retirer l'acces
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
+}
+
+function FriendsCollectionsSection(props: {
+  activeCollection: SharedCollectionSummary | null;
+  activeCollectionId: number | null;
+  board: SharedCollectionBoard | null;
+  collections: SharedCollectionSummary[];
+  hasLoadedOnce: boolean;
+  isBoardLoading: boolean;
+  isCollectionsLoading: boolean;
+  onSelectCollection: (collectionId: number) => void;
+  onUnsubscribe: (collection: SharedCollectionSummary) => void;
+}) {
+  const {
+    activeCollection,
+    activeCollectionId,
+    board,
+    collections,
+    hasLoadedOnce,
+    isBoardLoading,
+    isCollectionsLoading,
+    onSelectCollection,
+    onUnsubscribe,
+  } = props;
+  const [search, setSearch] = useState("");
+  const ownerName = activeCollection?.owner?.username || activeCollection?.owner?.email || "Votre ami";
+  const normalizedSearch = search.trim().toLowerCase();
+  const items = (board?.items ?? [])
+    .filter((item) => (normalizedSearch ? item.game.name.toLowerCase().includes(normalizedSearch) : true))
+    .slice()
+    .sort((left, right) => left.game.name.localeCompare(right.game.name, "fr"));
+  const hasGames = (board?.items.length ?? 0) > 0;
+
+  useEffect(() => {
+    setSearch("");
+  }, [activeCollectionId]);
+
+  return (
+    <section className="friends-layout">
+      <section className="panel friends-sidebar-panel">
+        <div className="section-intro compact">
+          <p className="eyebrow">Mes amis</p>
+          <h2>Collections partagees</h2>
+          <p>Retrouvez ici les ludotheques auxquelles vous etes abonne.</p>
+        </div>
+
+        {!hasLoadedOnce && isCollectionsLoading ? (
+          <div className="empty-state compact">
+            <h3>Chargement</h3>
+            <p>Recuperation de vos collections partagees.</p>
+          </div>
+        ) : collections.length === 0 ? (
+          <div className="empty-state compact">
+            <h3>Aucune collection</h3>
+            <p>Ouvrez un lien de partage pour ajouter automatiquement une collection a cet onglet.</p>
+          </div>
+        ) : (
+          <div className="friends-collection-list">
+            {collections.map((collection) => {
+              const isActive = collection.collection_id === activeCollectionId;
+              const friendLabel = collection.owner?.username || collection.owner?.email || "Collection partagee";
+
+              return (
+                <button
+                  key={collection.collection_id}
+                  type="button"
+                  className={`friends-collection-card ${isActive ? "friends-collection-card-active" : ""}`}
+                  onClick={() => onSelectCollection(collection.collection_id)}
+                >
+                  <span className="eyebrow">Partage par {friendLabel}</span>
+                  <strong>{collection.name}</strong>
+                  <small>{collection.game_count > 1 ? `${collection.game_count} jeux` : `${collection.game_count} jeu`}</small>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="panel friends-board-panel">
+        {!activeCollection ? (
+          <div className="empty-state">
+            <h3>Selectionnez une collection</h3>
+            <p>Choisissez une collection dans la liste pour parcourir son contenu.</p>
+          </div>
+        ) : (
+          <>
+            <div className="friends-board-header">
+              <div className="section-intro compact">
+                <p className="eyebrow">Collection de {ownerName}</p>
+                <h2>{activeCollection.name}</h2>
+                <p>{activeCollection.description || "Collection partagee en lecture seule."}</p>
+              </div>
+              <button type="button" className="secondary-button" onClick={() => onUnsubscribe(activeCollection)}>
+                Se desabonner
+              </button>
+            </div>
+
+            {isBoardLoading ? (
+              <div className="empty-state">
+                <h3>Chargement</h3>
+                <p>Recuperation de la collection de {ownerName}.</p>
+              </div>
+            ) : !hasGames ? (
+              <div className="empty-state">
+                <h3>Collection vide</h3>
+                <p>Cette collection ne contient encore aucun jeu.</p>
+              </div>
+            ) : (
+              <>
+                <section className="panel games-search friends-search-panel">
+                  <label className="games-search-field">
+                    <span>Recherche</span>
+                    <input
+                      aria-label="Rechercher dans la collection de votre ami"
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Nom du jeu"
+                    />
+                  </label>
+                </section>
+
+                {items.length === 0 ? (
+                  <div className="empty-state">
+                    <h3>Aucun jeu trouve</h3>
+                    <p>Essayez une autre recherche.</p>
+                  </div>
+                ) : (
+                  <section className="collection-game-grid">
+                    {items.map((item) => (
+                      <SharedCollectionGameCard key={item.id} item={item} />
+                    ))}
+                  </section>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function SharedCollectionGameCard(props: { item: CollectionItem }) {
+  const [hoveredGameId, setHoveredGameId] = useState<number | null>(null);
+  const { item } = props;
+
+  return (
+    <article className="panel collection-card collection-game-tile collection-card-readonly">
+      <div
+        className="collection-card-media"
+        onMouseEnter={() => setHoveredGameId(item.id)}
+        onMouseLeave={() => setHoveredGameId((current) => (current === item.id ? null : current))}
+        onFocus={() => setHoveredGameId(item.id)}
+        onBlur={() => setHoveredGameId((current) => (current === item.id ? null : current))}
+        tabIndex={0}
+      >
+        {item.game.image_url ? (
+          <img src={item.game.image_url} alt={item.game.name} loading="lazy" />
+        ) : (
+          <div className="collection-card-fallback" aria-hidden="true">
+            {item.game.name.slice(0, 1).toUpperCase()}
+          </div>
+        )}
+      </div>
+      <div className="collection-card-title">
+        <GameNameCell
+          game={item.game}
+          isVisible={hoveredGameId === item.id}
+          onHoverEnd={() => setHoveredGameId((current) => (current === item.id ? null : current))}
+          onHoverStart={() => setHoveredGameId(item.id)}
+        />
+      </div>
+      <div className="collection-card-facts">
+        <CompactGameFact kind="year" label="Annee de publication" value={String(item.game.creation_year ?? "-")} />
+        <CompactGameFact kind="players" label="Nombre de joueurs" value={formatPlayers(item.game)} />
+        <CompactGameFact kind="duration" label="Duree" value={formatDuration(item.game.duration_minutes)} />
+      </div>
+    </article>
   );
 }
 

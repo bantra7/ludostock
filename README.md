@@ -162,7 +162,7 @@ Recent Google Cloud projects can run builds with the Compute Engine default serv
 
 ### Required IAM for the backend runtime identity
 
-The Cloud Run service identity used by `ludostock-backend` must be able to read the mounted bucket. If you keep the default Compute Engine service account, grant it `roles/storage.objectViewer` on the `ludostock-data` bucket.
+The Cloud Run service identity used by `ludostock-backend` must be able to read and write the SQLite snapshot object in Cloud Storage. If you keep the default Compute Engine service account, grant it a role such as `roles/storage.objectAdmin` on the `ludostock-data` bucket.
 
 ### Run Cloud Build
 
@@ -202,4 +202,4 @@ Cloud Run domain mappings are a convenient shortcut. For a production-grade Goog
 
 ### Important runtime note
 
-The backend currently uses SQLite. In the provided Cloud Run deployment it writes to `/tmp/ludostock.db`, which is ephemeral and not suitable for durable production data. This setup is acceptable for smoke tests or temporary environments, but a persistent database is still needed for real production usage.
+The backend currently uses SQLite. In the provided Cloud Run deployment it writes to `/tmp/ludostock.db`, downloads the latest snapshot from GCS at startup, and uploads a fresh snapshot back to GCS after each write commit. This makes the file durable across restarts, but it is still a serialized single-writer design and remains less robust than a real managed database for long-term production scale.

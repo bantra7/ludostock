@@ -103,12 +103,10 @@ steps:
           --platform managed \
           --execution-environment gen2 \
           --port 8081 \
+          --min-instances 1 \
+          --max-instances 1 \
           --allow-unauthenticated \
-          --clear-volumes \
-          --add-volume "name=sqlite-data,type=cloud-storage,bucket=${_SQLITE_BUCKET},readonly=true" \
-          --clear-volume-mounts \
-          --add-volume-mount "volume=sqlite-data,mount-path=/mnt/ludostock-data" \
-          --set-env-vars "ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,SQLITE_SEED_PATH=/mnt/ludostock-data/${_SQLITE_OBJECT_PATH},AUTH_SERVICE_URL=$${AUTH_URL},ALLOW_ORIGINS=*" \
+          --set-env-vars "ENVIRONMENT=production,SQLITE_PATH=/tmp/ludostock.db,SQLITE_GCS_BUCKET=${_SQLITE_BUCKET},SQLITE_GCS_OBJECT=${_SQLITE_OBJECT_PATH},AUTH_SERVICE_URL=$${AUTH_URL},ALLOW_ORIGINS=*" \
           --set-secrets "AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
         BACKEND_URL="$$(gcloud run services describe "${_BACKEND_SERVICE}" --region "$$REGION" --format='value(status.url)')"
@@ -138,12 +136,10 @@ steps:
           --platform managed \
           --execution-environment gen2 \
           --port 8081 \
+          --min-instances 1 \
+          --max-instances 1 \
           --allow-unauthenticated \
-          --clear-volumes \
-          --add-volume "name=sqlite-data,type=cloud-storage,bucket=${_SQLITE_BUCKET},readonly=true" \
-          --clear-volume-mounts \
-          --add-volume-mount "volume=sqlite-data,mount-path=/mnt/ludostock-data" \
-          --set-env-vars "^|^ENVIRONMENT=production|SQLITE_PATH=/tmp/ludostock.db|SQLITE_SEED_PATH=/mnt/ludostock-data/${_SQLITE_OBJECT_PATH}|AUTH_SERVICE_URL=$${AUTH_URL}|ALLOW_ORIGINS=${_PUBLIC_ORIGIN},$${FRONTEND_URL}" \
+          --set-env-vars "^|^ENVIRONMENT=production|SQLITE_PATH=/tmp/ludostock.db|SQLITE_GCS_BUCKET=${_SQLITE_BUCKET}|SQLITE_GCS_OBJECT=${_SQLITE_OBJECT_PATH}|AUTH_SERVICE_URL=$${AUTH_URL}|ALLOW_ORIGINS=${_PUBLIC_ORIGIN},$${FRONTEND_URL}" \
           --set-secrets "AUTH_INTERNAL_SECRET=${_AUTH_INTERNAL_SECRET_NAME}:latest"
 
         echo "Frontend URL: $${FRONTEND_URL}"

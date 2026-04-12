@@ -1,6 +1,8 @@
 """FastAPI application entrypoint."""
 
 from contextlib import asynccontextmanager
+import logging
+import os
 from typing import List, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -9,14 +11,48 @@ from fastapi.responses import JSONResponse
 
 from . import __version__, crud, schemas
 from .auth import AUTH_EXEMPT_PATHS, get_authenticated_session, is_admin_user, requires_admin_access
-from .config import ALLOW_ORIGINS
+from .config import ALLOW_ORIGINS, ENVIRONMENT, SQLITE_PATH
 from .database import init_db
+
+
+logger = logging.getLogger("ludostock.backend")
+
+
+def _runtime_log_context() -> dict[str, str]:
+    """Return runtime identifiers that help correlate Cloud Run logs."""
+    return {
+        "hostname": os.environ.get("HOSTNAME", "unknown"),
+        "service": os.environ.get("K_SERVICE", "unknown"),
+        "revision": os.environ.get("K_REVISION", "unknown"),
+        "sqlite_path": SQLITE_PATH,
+        "sqlite_seed_path": os.environ.get("SQLITE_SEED_PATH", ""),
+        "environment": ENVIRONMENT,
+    }
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Initialize the SQLite database on startup."""
     init_db()
+    runtime = _runtime_log_context()
+    logger.info(
+        "backend.startup environment=%s service=%s revision=%s hostname=%s sqlite_path=%s sqlite_seed_path=%s allow_origins=%s",
+        runtime["environment"],
+        runtime["service"],
+        runtime["revision"],
+        runtime["hostname"],
+        runtime["sqlite_path"],
+        runtime["sqlite_seed_path"] or "-",
+        ",".join(ALLOW_ORIGINS),
+    )
+    if ENVIRONMENT == "production" and SQLITE_PATH.startswith("/tmp/"):
+        logger.warning(
+            "backend.temporary_sqlite_runtime service=%s revision=%s hostname=%s sqlite_path=%s",
+            runtime["service"],
+            runtime["revision"],
+            runtime["hostname"],
+            runtime["sqlite_path"],
+        )
     yield
 
 
@@ -39,11 +75,24 @@ async def require_authentication(request: Request, call_next):
     try:
         session_payload = await get_authenticated_session(request)
     except HTTPException as exc:
+        logger.warning(
+            "auth.request_denied method=%s path=%s status=%s detail=%s",
+            request.method,
+            request.url.path,
+            exc.status_code,
+            exc.detail,
+        )
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     request.state.user = session_payload.get("user")
     request.state.session = session_payload.get("session")
     if requires_admin_access(request.url.path, request.method) and not is_admin_user(request.state.user):
+        logger.warning(
+            "auth.admin_required method=%s path=%s user_email=%s",
+            request.method,
+            request.url.path,
+            str((request.state.user or {}).get("email") or "").strip().lower() or "-",
+        )
         return JSONResponse(status_code=403, content={"detail": "Administrator privileges required"})
 
     return await call_next(request)
@@ -329,6 +378,38 @@ def get_my_collection_board(request: Request):
     return crud.get_personal_collection_board(auth_user=request.state.user)
 
 
+@app.get("/api/me/collection/share/", response_model=schemas.CollectionShareSettings, tags=["Collections"])
+def get_my_collection_share_settings(request: Request):
+    """Return the authenticated user's collection sharing settings."""
+    return crud.get_personal_collection_share_settings(auth_user=request.state.user)
+
+
+@app.patch("/api/me/collection/share/", response_model=schemas.CollectionShareSettings, tags=["Collections"])
+def update_my_collection_share_settings(request: Request, payload: schemas.CollectionShareSettingsUpdate):
+    """Update the authenticated user's collection sharing settings."""
+    return crud.update_personal_collection_share_settings(
+        auth_user=request.state.user,
+        share_enabled=payload.share_enabled,
+        regenerate_link=payload.regenerate_link,
+    )
+
+
+@app.delete(
+    "/api/me/collection/share/subscribers/{share_id}",
+    response_model=schemas.CollectionShare,
+    tags=["Collections"],
+)
+def revoke_my_collection_subscriber(request: Request, share_id: int):
+    """Revoke a subscriber from the authenticated user's collection."""
+    return crud.revoke_personal_collection_subscriber(auth_user=request.state.user, share_id=share_id)
+
+
+@app.post("/api/me/collection/share/join/", response_model=schemas.SharedCollectionSummary, tags=["Collections"])
+def join_collection_share(request: Request, payload: schemas.CollectionShareJoinCreate):
+    """Subscribe the authenticated user to a shared collection using a share link."""
+    return crud.join_shared_collection(auth_user=request.state.user, share_token=payload.share_token)
+
+
 @app.post("/api/me/collection/games/", response_model=schemas.CollectionGame, tags=["Collections"])
 def add_game_to_my_collection(request: Request, payload: schemas.PersonalCollectionGameCreate):
     """Add a catalog game to the authenticated user's personal collection."""
@@ -379,6 +460,32 @@ def update_location_in_my_collection(request: Request, location_id: int, payload
 def delete_location_in_my_collection(request: Request, location_id: int):
     """Delete a location in the authenticated user's collection."""
     return crud.delete_personal_location(auth_user=request.state.user, location_id=location_id)
+
+
+@app.get("/api/me/friends/collections/", response_model=List[schemas.SharedCollectionSummary], tags=["Collections"])
+def get_my_friend_collections(request: Request):
+    """List the collections shared with the authenticated user."""
+    return crud.get_shared_collections(auth_user=request.state.user)
+
+
+@app.get(
+    "/api/me/friends/collections/{collection_id}/board/",
+    response_model=schemas.SharedCollectionBoard,
+    tags=["Collections"],
+)
+def get_my_friend_collection_board(request: Request, collection_id: int):
+    """Return the board of a collection shared with the authenticated user."""
+    return crud.get_shared_collection_board(auth_user=request.state.user, collection_id=collection_id)
+
+
+@app.delete(
+    "/api/me/friends/collections/{collection_id}/subscription/",
+    response_model=schemas.CollectionShare,
+    tags=["Collections"],
+)
+def unsubscribe_from_friend_collection(request: Request, collection_id: int):
+    """Unsubscribe the authenticated user from a shared collection."""
+    return crud.unsubscribe_from_shared_collection(auth_user=request.state.user, collection_id=collection_id)
 
 
 @app.get("/api/collections/{collection_id}", response_model=schemas.Collection, tags=["Collections"])

@@ -1,5 +1,8 @@
 """CRUD helpers backed by SQLite."""
 
+import logging
+import os
+import secrets
 import sqlite3
 from collections import defaultdict
 from typing import Any, Literal
@@ -20,6 +23,27 @@ GAME_RELATIONS = {
 
 GameSortField = Literal["name", "type", "creation_year", "players", "duration_minutes", "authors", "editors"]
 GameSortDirection = Literal["asc", "desc"]
+SHARE_PERMISSION_VIEWER = "viewer"
+logger = logging.getLogger("ludostock.backend.collection")
+
+
+def _runtime_log_context() -> dict[str, str]:
+    """Return runtime identifiers that help correlate backend collection logs."""
+    return {
+        "hostname": os.environ.get("HOSTNAME", "unknown"),
+        "service": os.environ.get("K_SERVICE", "unknown"),
+        "revision": os.environ.get("K_REVISION", "unknown"),
+        "sqlite_path": os.environ.get("SQLITE_PATH", ""),
+        "sqlite_seed_path": os.environ.get("SQLITE_SEED_PATH", ""),
+    }
+
+
+def _auth_user_log_context(auth_user: dict[str, Any]) -> dict[str, str]:
+    """Return a compact, log-friendly representation of the authenticated user."""
+    return {
+        "email": str(auth_user.get("email") or "").strip().lower() or "-",
+        "name": str(auth_user.get("name") or "").strip() or "-",
+    }
 
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -326,6 +350,7 @@ def _serialize_collection(
     collection_id = collection_row["id"]
     owner_id = str(collection_row["owner_id"])
     payload = dict(collection_row)
+    payload["share_enabled"] = bool(payload.get("share_enabled"))
     payload["owner"] = owner_map.get(owner_id)
     payload["shares"] = shares_by_collection.get(collection_id, [])
     payload["games"] = games_by_collection.get(collection_id, [])
@@ -360,18 +385,41 @@ def _get_or_create_authenticated_user(auth_user: dict[str, Any]) -> dict[str, An
     """Return the local user row matching the authenticated Google profile."""
     profile = _get_authenticated_user_profile(auth_user)
     existing_user = get_user_by_username(profile["username"]) or get_user_by_email(profile["email"])
+    runtime = _runtime_log_context()
 
     if existing_user is None:
-        return create_user(
+        created_user = create_user(
             schemas.UserCreate(email=profile["email"], username=profile["username"]),
         )
+        logger.info(
+            "auth.user_created email=%s username=%s user_id=%s service=%s revision=%s hostname=%s sqlite_path=%s",
+            profile["email"],
+            profile["username"],
+            created_user["id"],
+            runtime["service"],
+            runtime["revision"],
+            runtime["hostname"],
+            runtime["sqlite_path"] or "-",
+        )
+        return created_user
 
     needs_sync = (
         str(existing_user.get("email") or "").strip().lower() != profile["email"]
         or str(existing_user.get("username") or "").strip() != profile["username"]
     )
     if needs_sync:
-        return _sync_user_profile(existing_user["id"], profile["email"], profile["username"])
+        synced_user = _sync_user_profile(existing_user["id"], profile["email"], profile["username"])
+        logger.info(
+            "auth.user_synced email=%s username=%s user_id=%s service=%s revision=%s hostname=%s sqlite_path=%s",
+            profile["email"],
+            profile["username"],
+            synced_user["id"],
+            runtime["service"],
+            runtime["revision"],
+            runtime["hostname"],
+            runtime["sqlite_path"] or "-",
+        )
+        return synced_user
 
     return existing_user
 
@@ -385,6 +433,7 @@ def _get_or_create_personal_collection(auth_user: dict[str, Any]) -> dict[str, A
     """Return the authenticated user's personal collection, creating it when missing."""
     user = _get_or_create_authenticated_user(auth_user)
     collection = _get_collection_by_owner(user["id"])
+    runtime = _runtime_log_context()
 
     if collection is None:
         username = str(user.get("username") or "").strip() or "Utilisateur"
@@ -395,8 +444,157 @@ def _get_or_create_personal_collection(auth_user: dict[str, Any]) -> dict[str, A
                 owner_id=UUID(str(user["id"])),
             )
         )
+        logger.info(
+            "collection.created owner_user_id=%s owner_email=%s collection_id=%s service=%s revision=%s hostname=%s sqlite_path=%s",
+            user["id"],
+            str(user.get("email") or "").strip().lower() or "-",
+            collection["id"],
+            runtime["service"],
+            runtime["revision"],
+            runtime["hostname"],
+            runtime["sqlite_path"] or "-",
+        )
 
     return collection
+
+
+def _create_share_token() -> str:
+    """Return a URL-safe token used in collection share links."""
+    return secrets.token_urlsafe(24)
+
+
+def _get_collection_share_by_user(collection_id: int, user_id: str | UUID) -> dict[str, Any] | None:
+    """Return the share row granting a user access to a collection."""
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT *
+            FROM collection_shares
+            WHERE collection_id = ? AND shared_with = ?
+            LIMIT 1
+            """,
+            (collection_id, str(user_id)),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def _get_collection_by_share_token(share_token: str) -> dict[str, Any] | None:
+    """Return an enabled collection matching a share token."""
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT *
+            FROM collections
+            WHERE share_token = ? AND share_enabled = 1
+            LIMIT 1
+            """,
+            (share_token,),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def _list_collection_subscribers(collection_id: int) -> list[dict[str, Any]]:
+    """Return the subscribers that can view a collection."""
+    with get_connection() as connection:
+        rows = _rows_to_dicts(
+            connection.execute(
+                """
+                SELECT
+                    cs.id,
+                    cs.collection_id,
+                    cs.shared_with,
+                    cs.permission,
+                    u.id AS user_id,
+                    u.email AS user_email,
+                    u.username AS user_username
+                FROM collection_shares cs
+                JOIN users u ON u.id = cs.shared_with
+                WHERE cs.collection_id = ?
+                ORDER BY LOWER(COALESCE(u.username, u.email)) ASC, cs.id ASC
+                """,
+                (collection_id,),
+            ).fetchall()
+        )
+
+    return [
+        {
+            "id": row["id"],
+            "collection_id": row["collection_id"],
+            "shared_with": row["shared_with"],
+            "permission": row["permission"],
+            "user": {
+                "id": row["user_id"],
+                "email": row["user_email"],
+                "username": row["user_username"],
+            },
+        }
+        for row in rows
+    ]
+
+
+def _build_collection_board_payload(collection: dict[str, Any], owner: dict[str, Any]) -> dict[str, Any]:
+    """Return collection locations and game rows grouped for board views."""
+    with get_connection() as connection:
+        location_rows = _rows_to_dicts(
+            connection.execute(
+                """
+                SELECT *
+                FROM user_locations
+                WHERE user_id = ?
+                ORDER BY LOWER(name) ASC, id ASC
+                """,
+                (str(owner["id"]),),
+            ).fetchall()
+        )
+        collection_game_rows = _rows_to_dicts(
+            connection.execute(
+                """
+                SELECT *
+                FROM collection_games
+                WHERE collection_id = ?
+                ORDER BY id ASC
+                """,
+                (collection["id"],),
+            ).fetchall()
+        )
+
+    game_ids = [row["game_id"] for row in collection_game_rows]
+    game_rows = _fetch_rows_by_ids("games", game_ids)
+    relations = _load_game_relations([row["id"] for row in game_rows])
+    games_by_id = {row["id"]: _serialize_game(row, relations) for row in game_rows}
+
+    items = [
+        {
+            **row,
+            "game": games_by_id[row["game_id"]],
+        }
+        for row in collection_game_rows
+        if row["game_id"] in games_by_id
+    ]
+
+    return {
+        "locations": location_rows,
+        "items": items,
+    }
+
+
+def _serialize_shared_collection_summary(share_row: dict[str, Any], collection_row: dict[str, Any], owner: dict[str, Any]) -> dict[str, Any]:
+    """Return a compact payload describing a collection shared with the current user."""
+    with get_connection() as connection:
+        game_count = connection.execute(
+            "SELECT COUNT(*) FROM collection_games WHERE collection_id = ?",
+            (collection_row["id"],),
+        ).fetchone()[0]
+
+    return {
+        "collection_id": collection_row["id"],
+        "share_id": share_row["id"],
+        "permission": share_row["permission"],
+        "name": collection_row["name"],
+        "description": collection_row["description"],
+        "owner": owner,
+        "game_count": game_count,
+    }
 
 
 def _get_collection_game_by_identity(
@@ -466,6 +664,15 @@ def _require_personal_location(user_id: str, location_id: int | None) -> None:
 
     if _get_user_location_for_user(user_id, location_id) is None:
         raise HTTPException(status_code=404, detail="User location not found")
+
+
+def _count_collection_games(connection: sqlite3.Connection, collection_id: int) -> int:
+    """Return how many collection game rows exist for a collection."""
+    row = connection.execute(
+        "SELECT COUNT(*) AS total FROM collection_games WHERE collection_id = ?",
+        (collection_id,),
+    ).fetchone()
+    return int(row["total"] if row is not None else 0)
 
 
 def get_games(skip: int = 0, limit: int = 100):
@@ -796,6 +1003,184 @@ def get_collection_share(share_id: int):
     return _fetch_row("collection_shares", share_id)
 
 
+def get_personal_collection_share_settings(auth_user: dict[str, Any]) -> dict[str, Any]:
+    """Return share-link settings and subscribers for the authenticated user's collection."""
+    collection = _get_or_create_personal_collection(auth_user)
+
+    return {
+        "collection_id": collection["id"],
+        "share_enabled": bool(collection.get("share_enabled")),
+        "share_token": collection.get("share_token"),
+        "subscribers": _list_collection_subscribers(collection["id"]),
+    }
+
+
+def update_personal_collection_share_settings(
+    auth_user: dict[str, Any],
+    share_enabled: bool | None = None,
+    regenerate_link: bool = False,
+) -> dict[str, Any]:
+    """Update the authenticated user's collection share link state."""
+    collection = _get_or_create_personal_collection(auth_user)
+    next_share_enabled = bool(collection.get("share_enabled")) if share_enabled is None else share_enabled
+    next_share_token = collection.get("share_token")
+
+    if regenerate_link or (next_share_enabled and not next_share_token):
+        next_share_token = _create_share_token()
+
+    with get_connection() as connection:
+        try:
+            connection.execute(
+                """
+                UPDATE collections
+                SET share_enabled = ?, share_token = ?
+                WHERE id = ?
+                """,
+                (1 if next_share_enabled else 0, next_share_token, collection["id"]),
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as exc:
+            connection.rollback()
+            _raise_write_error(exc, "Share link could not be updated")
+
+    return get_personal_collection_share_settings(auth_user)
+
+
+def revoke_personal_collection_subscriber(auth_user: dict[str, Any], share_id: int) -> dict[str, Any]:
+    """Revoke a subscriber from the authenticated user's personal collection."""
+    collection = _get_or_create_personal_collection(auth_user)
+    share = get_collection_share(share_id)
+
+    if share is None or share["collection_id"] != collection["id"]:
+        raise HTTPException(status_code=404, detail="Collection subscriber not found")
+
+    deleted = delete_collection_share(share_id)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Collection subscriber not found")
+    return deleted
+
+
+def join_shared_collection(auth_user: dict[str, Any], share_token: str) -> dict[str, Any]:
+    """Subscribe the authenticated user to a collection using its share link."""
+    cleaned_token = share_token.strip()
+    if not cleaned_token:
+        raise HTTPException(status_code=400, detail="Share token is required")
+
+    user = _get_or_create_authenticated_user(auth_user)
+    collection = _get_collection_by_share_token(cleaned_token)
+    if collection is None:
+        raise HTTPException(status_code=404, detail="Shared collection not found")
+    if str(collection["owner_id"]) == str(user["id"]):
+        raise HTTPException(status_code=400, detail="You cannot subscribe to your own collection")
+
+    share = _get_collection_share_by_user(collection["id"], user["id"])
+    if share is None:
+        share = create_collection_share(
+            schemas.CollectionShareCreate(
+                shared_with=UUID(str(user["id"])),
+                permission=SHARE_PERMISSION_VIEWER,
+            ),
+            collection["id"],
+        )
+
+    owner = get_user(collection["owner_id"])
+    if owner is None:
+        raise HTTPException(status_code=404, detail="Collection owner not found")
+
+    return _serialize_shared_collection_summary(share, collection, owner)
+
+
+def get_shared_collections(auth_user: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the collections shared with the authenticated user."""
+    user = _get_or_create_authenticated_user(auth_user)
+
+    with get_connection() as connection:
+        rows = _rows_to_dicts(
+            connection.execute(
+                """
+                SELECT
+                    cs.id AS share_id,
+                    cs.permission,
+                    c.id AS collection_id,
+                    c.name,
+                    c.description,
+                    c.owner_id,
+                    (
+                        SELECT COUNT(*)
+                        FROM collection_games cg
+                        WHERE cg.collection_id = c.id
+                    ) AS game_count,
+                    u.id AS owner_user_id,
+                    u.email AS owner_email,
+                    u.username AS owner_username
+                FROM collection_shares cs
+                JOIN collections c ON c.id = cs.collection_id
+                JOIN users u ON u.id = c.owner_id
+                WHERE cs.shared_with = ?
+                ORDER BY LOWER(COALESCE(u.username, u.email)) ASC, LOWER(c.name) ASC, c.id ASC
+                """,
+                (str(user["id"]),),
+            ).fetchall()
+        )
+
+    return [
+        {
+            "collection_id": row["collection_id"],
+            "share_id": row["share_id"],
+            "permission": row["permission"],
+            "name": row["name"],
+            "description": row["description"],
+            "owner": {
+                "id": row["owner_user_id"],
+                "email": row["owner_email"],
+                "username": row["owner_username"],
+            },
+            "game_count": row["game_count"],
+        }
+        for row in rows
+    ]
+
+
+def get_shared_collection_board(auth_user: dict[str, Any], collection_id: int) -> dict[str, Any]:
+    """Return the board for a collection shared with the authenticated user."""
+    user = _get_or_create_authenticated_user(auth_user)
+    share = _get_collection_share_by_user(collection_id, user["id"])
+    if share is None:
+        raise HTTPException(status_code=404, detail="Shared collection not found")
+
+    collection = get_collection(collection_id)
+    if collection is None:
+        raise HTTPException(status_code=404, detail="Shared collection not found")
+
+    owner = collection.get("owner")
+    if owner is None:
+        raise HTTPException(status_code=404, detail="Collection owner not found")
+
+    board = _build_collection_board_payload(collection, owner)
+    return {
+        "collection_id": collection["id"],
+        "share_id": share["id"],
+        "permission": share["permission"],
+        "name": collection["name"],
+        "description": collection["description"],
+        "owner": owner,
+        **board,
+    }
+
+
+def unsubscribe_from_shared_collection(auth_user: dict[str, Any], collection_id: int) -> dict[str, Any]:
+    """Remove the authenticated user's subscription to a shared collection."""
+    user = _get_or_create_authenticated_user(auth_user)
+    share = _get_collection_share_by_user(collection_id, user["id"])
+    if share is None:
+        raise HTTPException(status_code=404, detail="Shared collection not found")
+
+    deleted = delete_collection_share(share["id"])
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Shared collection not found")
+    return deleted
+
+
 def create_collection_share(share: schemas.CollectionShareCreate, collection_id: int):
     """Create a collection share."""
     payload = share.model_dump()
@@ -917,49 +1302,27 @@ def get_personal_collection_board(auth_user: dict[str, Any]) -> dict[str, Any]:
     """Return the authenticated user's collection board with locations and game rows."""
     user = _get_or_create_authenticated_user(auth_user)
     collection = _get_or_create_personal_collection(auth_user)
+    board = _build_collection_board_payload(collection, user)
+    user_context = _auth_user_log_context(auth_user)
+    runtime = _runtime_log_context()
 
-    with get_connection() as connection:
-        location_rows = _rows_to_dicts(
-            connection.execute(
-                """
-                SELECT *
-                FROM user_locations
-                WHERE user_id = ?
-                ORDER BY LOWER(name) ASC, id ASC
-                """,
-                (str(user["id"]),),
-            ).fetchall()
-        )
-        collection_game_rows = _rows_to_dicts(
-            connection.execute(
-                """
-                SELECT *
-                FROM collection_games
-                WHERE collection_id = ?
-                ORDER BY id ASC
-                """,
-                (collection["id"],),
-            ).fetchall()
-        )
-
-    game_ids = [row["game_id"] for row in collection_game_rows]
-    game_rows = _fetch_rows_by_ids("games", game_ids)
-    relations = _load_game_relations([row["id"] for row in game_rows])
-    games_by_id = {row["id"]: _serialize_game(row, relations) for row in game_rows}
-
-    items = [
-        {
-            **row,
-            "game": games_by_id[row["game_id"]],
-        }
-        for row in collection_game_rows
-        if row["game_id"] in games_by_id
-    ]
+    logger.info(
+        "collection.board_loaded email=%s name=%s user_id=%s collection_id=%s items=%s locations=%s service=%s revision=%s hostname=%s sqlite_path=%s",
+        user_context["email"],
+        user_context["name"],
+        user["id"],
+        collection["id"],
+        len(board["items"]),
+        len(board["locations"]),
+        runtime["service"],
+        runtime["revision"],
+        runtime["hostname"],
+        runtime["sqlite_path"] or "-",
+    )
 
     return {
         "collection_id": collection["id"],
-        "locations": location_rows,
-        "items": items,
+        **board,
     }
 
 
@@ -977,15 +1340,40 @@ def add_game_to_personal_collection(
     """Add a catalog game to the authenticated user's collection."""
     user = _get_or_create_authenticated_user(auth_user)
     collection = _get_or_create_personal_collection(auth_user)
+    user_context = _auth_user_log_context(auth_user)
+    runtime = _runtime_log_context()
     _require_personal_location(str(user["id"]), location_id)
 
     if get_game(game_id) is None:
+        logger.warning(
+            "collection.add_missing_game email=%s user_id=%s collection_id=%s game_id=%s service=%s revision=%s hostname=%s",
+            user_context["email"],
+            user["id"],
+            collection["id"],
+            game_id,
+            runtime["service"],
+            runtime["revision"],
+            runtime["hostname"],
+        )
         raise HTTPException(status_code=404, detail="Game not found")
 
     if _get_collection_game_by_game_id(collection["id"], game_id) is not None:
+        logger.warning(
+            "collection.add_duplicate_game email=%s user_id=%s collection_id=%s game_id=%s service=%s revision=%s hostname=%s",
+            user_context["email"],
+            user["id"],
+            collection["id"],
+            game_id,
+            runtime["service"],
+            runtime["revision"],
+            runtime["hostname"],
+        )
         raise HTTPException(status_code=409, detail="Game is already present in the personal collection")
 
-    return create_collection_game(
+    with get_connection() as connection:
+        before_count = _count_collection_games(connection, collection["id"])
+
+    created = create_collection_game(
         schemas.CollectionGameCreate(
             collection_id=collection["id"],
             game_id=game_id,
@@ -993,6 +1381,28 @@ def add_game_to_personal_collection(
             quantity=quantity,
         )
     )
+    with get_connection() as connection:
+        after_count = _count_collection_games(connection, collection["id"])
+
+    logger.info(
+        "collection.added email=%s name=%s user_id=%s collection_id=%s collection_game_id=%s game_id=%s location_id=%s quantity=%s before_count=%s after_count=%s service=%s revision=%s hostname=%s sqlite_path=%s sqlite_seed_path=%s",
+        user_context["email"],
+        user_context["name"],
+        user["id"],
+        collection["id"],
+        created["id"],
+        game_id,
+        location_id if location_id is not None else "null",
+        quantity,
+        before_count,
+        after_count,
+        runtime["service"],
+        runtime["revision"],
+        runtime["hostname"],
+        runtime["sqlite_path"] or "-",
+        runtime["sqlite_seed_path"] or "-",
+    )
+    return created
 
 
 def create_personal_location(auth_user: dict[str, Any], name: str) -> dict[str, Any]:

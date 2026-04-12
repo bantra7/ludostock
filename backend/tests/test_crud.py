@@ -227,6 +227,91 @@ def test_get_personal_collection_board_groups_items_and_locations(sqlite_game_st
     assert patchwork_item["location_id"] is None
 
 
+def test_personal_collection_share_settings_enable_link_and_list_subscribers(sqlite_game_store):
+    alice = {"name": "Alice Example", "email": "alice@example.com"}
+    bob = {"name": "Bob Example", "email": "bob@example.com"}
+
+    initial_settings = crud.get_personal_collection_share_settings(auth_user=alice)
+    enabled_settings = crud.update_personal_collection_share_settings(auth_user=alice, share_enabled=True)
+    joined = crud.join_shared_collection(auth_user=bob, share_token=enabled_settings["share_token"])
+    refreshed_settings = crud.get_personal_collection_share_settings(auth_user=alice)
+
+    assert initial_settings["share_enabled"] is False
+    assert initial_settings["share_token"] is None
+    assert enabled_settings["share_enabled"] is True
+    assert enabled_settings["share_token"]
+    assert joined["permission"] == "viewer"
+    assert len(refreshed_settings["subscribers"]) == 1
+    assert refreshed_settings["subscribers"][0]["user"]["email"] == "bob@example.com"
+
+
+def test_join_shared_collection_exposes_friend_list_and_board(sqlite_game_store):
+    azul = crud.create_game(
+        schemas.GameCreate(name="Azul", type="jeu", authors=["Michael Kiesling"], editors=["Next Move"])
+    )
+    alice = {"name": "Alice Example", "email": "alice@example.com"}
+    bob = {"name": "Bob Example", "email": "bob@example.com"}
+
+    crud.add_game_to_personal_collection(auth_user=alice, game_id=azul["id"])
+    settings = crud.update_personal_collection_share_settings(auth_user=alice, share_enabled=True)
+    joined = crud.join_shared_collection(auth_user=bob, share_token=settings["share_token"])
+    shared_collections = crud.get_shared_collections(auth_user=bob)
+    board = crud.get_shared_collection_board(auth_user=bob, collection_id=joined["collection_id"])
+
+    assert len(shared_collections) == 1
+    assert shared_collections[0]["owner"]["email"] == "alice@example.com"
+    assert shared_collections[0]["game_count"] == 1
+    assert board["name"] == "Collection de Alice Example"
+    assert board["owner"]["email"] == "alice@example.com"
+    assert [item["game"]["name"] for item in board["items"]] == ["Azul"]
+
+
+def test_revoke_personal_collection_subscriber_blocks_future_access(sqlite_game_store):
+    alice = {"name": "Alice Example", "email": "alice@example.com"}
+    bob = {"name": "Bob Example", "email": "bob@example.com"}
+
+    settings = crud.update_personal_collection_share_settings(auth_user=alice, share_enabled=True)
+    joined = crud.join_shared_collection(auth_user=bob, share_token=settings["share_token"])
+
+    revoked = crud.revoke_personal_collection_subscriber(auth_user=alice, share_id=joined["share_id"])
+
+    assert revoked["id"] == joined["share_id"]
+    with pytest.raises(HTTPException) as exc_info:
+        crud.get_shared_collection_board(auth_user=bob, collection_id=joined["collection_id"])
+
+    assert exc_info.value.status_code == 404
+
+
+def test_unsubscribe_from_shared_collection_removes_subscription(sqlite_game_store):
+    alice = {"name": "Alice Example", "email": "alice@example.com"}
+    bob = {"name": "Bob Example", "email": "bob@example.com"}
+
+    settings = crud.update_personal_collection_share_settings(auth_user=alice, share_enabled=True)
+    joined = crud.join_shared_collection(auth_user=bob, share_token=settings["share_token"])
+    unsubscribed = crud.unsubscribe_from_shared_collection(auth_user=bob, collection_id=joined["collection_id"])
+
+    assert unsubscribed["collection_id"] == joined["collection_id"]
+    assert crud.get_shared_collections(auth_user=bob) == []
+
+
+def test_join_shared_collection_rejects_disabled_or_own_link(sqlite_game_store):
+    alice = {"name": "Alice Example", "email": "alice@example.com"}
+    bob = {"name": "Bob Example", "email": "bob@example.com"}
+
+    settings = crud.update_personal_collection_share_settings(auth_user=alice, share_enabled=True)
+    crud.update_personal_collection_share_settings(auth_user=alice, share_enabled=False)
+
+    with pytest.raises(HTTPException) as disabled_exc:
+        crud.join_shared_collection(auth_user=bob, share_token=settings["share_token"])
+
+    enabled_settings = crud.update_personal_collection_share_settings(auth_user=alice, share_enabled=True)
+    with pytest.raises(HTTPException) as own_exc:
+        crud.join_shared_collection(auth_user=alice, share_token=enabled_settings["share_token"])
+
+    assert disabled_exc.value.status_code == 404
+    assert own_exc.value.status_code == 400
+
+
 def test_move_personal_collection_game_updates_location(sqlite_game_store):
     azul = crud.create_game(
         schemas.GameCreate(name="Azul", type="jeu", authors=["Michael Kiesling"], editors=["Next Move"])

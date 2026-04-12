@@ -1,4 +1,4 @@
-export type NavKey = "home" | "catalog" | "games" | "locations" | "settings";
+export type NavKey = "home" | "catalog" | "games" | "friends" | "locations" | "settings";
 export type ReferenceKey = "authors" | "artists" | "editors" | "distributors";
 
 export type NamedEntity = {
@@ -60,6 +60,48 @@ export type CollectionBoard = {
   items: CollectionItem[];
 };
 
+export type UserProfile = {
+  id: string;
+  email: string;
+  username: string | null;
+};
+
+export type CollectionSubscriber = {
+  id: number;
+  collection_id: number;
+  shared_with: string;
+  permission: string;
+  user: UserProfile | null;
+};
+
+export type CollectionShareSettings = {
+  collection_id: number;
+  share_enabled: boolean;
+  share_token: string | null;
+  subscribers: CollectionSubscriber[];
+};
+
+export type SharedCollectionSummary = {
+  collection_id: number;
+  share_id: number;
+  permission: string;
+  name: string;
+  description: string | null;
+  owner: UserProfile | null;
+  game_count: number;
+};
+
+export type SharedCollectionBoard = {
+  collection_id: number;
+  share_id: number;
+  permission: string;
+  name: string;
+  description: string | null;
+  owner: UserProfile | null;
+  locations: UserLocation[];
+  items: CollectionItem[];
+};
+
 export type GameFormState = {
   name: string;
   type: string;
@@ -84,6 +126,7 @@ export const navItems: { key: NavKey; label: string }[] = [
   { key: "home", label: "Accueil" },
   { key: "catalog", label: "Catalogue" },
   { key: "games", label: "Ma collection" },
+  { key: "friends", label: "Mes amis" },
   { key: "locations", label: "Lieux" },
   { key: "settings", label: "Parametres" },
 ];
